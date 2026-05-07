@@ -39,16 +39,6 @@ The numbers in the table above come straight from Audi's MMI manual page **Contr
 
 Tested on **Audi MMI 3G+** (Audi Q7 4LB).
 
-## Screenshots
-
-Drop these here once captured (right-click → Take Screenshot, or Shift-⌘-4 then drag over the window):
-
-```
-docs/screenshots/main.png         — main window with several jobs queued
-docs/screenshots/settings.png     — settings drawer with Audi MMI preset
-docs/screenshots/dedup.png        — "already downloaded" prompt
-```
-
 ## Install
 
 ```bash
