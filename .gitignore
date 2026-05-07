@@ -30,3 +30,16 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Wails
+build/bin
+node_modules
+frontend/dist
+frontend/wailsjs
+frontend/package.json.md5
+frontend/*.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
+
+# OS
+.DS_Store

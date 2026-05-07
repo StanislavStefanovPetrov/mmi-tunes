@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "MMI Tunes",
+  "outputfilename": "MMI Tunes",
+  "frontend:install": "pnpm install",
+  "frontend:build": "pnpm run build",
+  "frontend:dev:watcher": "pnpm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Stanislav Petrov",
+    "email": "eqsol.sofia@gmail.com"
+  },
+  "info": {
+    "companyName": "Stanislav Petrov",
+    "productName": "MMI Tunes",
+    "productIdentifier": "com.stanislavpetrov.mmi-tunes",
+    "comments": "macOS app for downloading YouTube audio as Audi MMI compatible MP3"
+  }
+}
