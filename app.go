@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	wruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -96,9 +97,26 @@ func (a *App) shutdown(ctx context.Context) {
 
 // eventLoop bridges queue events to the Wails event system. The frontend
 // subscribes via EventsOn("job:added"|"job:status"|...).
+//
+// Persistence is debounced — yt-dlp emits dozens of progress lines per
+// second per concurrent download, so saving jobs.json on every event would
+// thrash the disk. We mark the state dirty on any non-progress event (or
+// once per second on progress events) and let a separate goroutine flush
+// at most once per second.
 func (a *App) eventLoop() {
+	dirty := make(chan struct{}, 1)
+	markDirty := func() {
+		select {
+		case dirty <- struct{}{}:
+		default:
+		}
+	}
+	go a.persistLoop(dirty)
+
+	var lastProgressSave time.Time
 	for ev := range a.queue.Events() {
 		var name string
+		shouldSave := true
 		switch ev.Kind {
 		case queue.EventAdded:
 			name = "job:added"
@@ -106,6 +124,12 @@ func (a *App) eventLoop() {
 			name = "job:status"
 		case queue.EventProgress:
 			name = "job:progress"
+			// Throttle: only mark dirty from progress events at most
+			// once per second to keep the dirty channel quiet.
+			shouldSave = time.Since(lastProgressSave) > time.Second
+			if shouldSave {
+				lastProgressSave = time.Now()
+			}
 		case queue.EventDone:
 			a.recordHistory(ev.Job)
 			name = "job:done"
@@ -117,10 +141,45 @@ func (a *App) eventLoop() {
 			continue
 		}
 		wruntime.EventsEmit(a.ctx, name, ev.Job)
+		if shouldSave && a.jobsPath != "" {
+			markDirty()
+		}
+	}
+	// Channel closed → final flush, then signal persist loop to exit.
+	close(dirty)
+}
 
-		// Persist on every state change. Cheap (small JSON, debounce TBD).
-		if a.jobsPath != "" {
-			_ = a.queue.Save(a.jobsPath)
+// persistLoop coalesces writes to jobs.json. Receives a tick on `dirty`
+// whenever state needs to be persisted. Flushes at most once per second,
+// plus a final flush when the channel closes.
+func (a *App) persistLoop(dirty <-chan struct{}) {
+	if a.jobsPath == "" {
+		return
+	}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	pending := false
+	flush := func() {
+		if !pending {
+			return
+		}
+		pending = false
+		if err := a.queue.Save(a.jobsPath); err != nil {
+			log.Printf("persist jobs.json: %v", err)
+		}
+	}
+
+	for {
+		select {
+		case _, ok := <-dirty:
+			if !ok {
+				flush()
+				return
+			}
+			pending = true
+		case <-ticker.C:
+			flush()
 		}
 	}
 }
@@ -207,7 +266,8 @@ func (a *App) PickFolder() (string, error) {
 }
 
 // RevealInFinder opens the parent folder of path in Finder, selecting
-// the file if possible.
+// the file. The path must live under the configured DownloadFolder —
+// any other path is rejected to avoid acting on unsanitised input.
 func (a *App) RevealInFinder(path string) error {
 	if path == "" {
 		return errors.New("empty path")
@@ -215,14 +275,21 @@ func (a *App) RevealInFinder(path string) error {
 	if runtime.GOOS != "darwin" {
 		return errors.New("RevealInFinder only supported on macOS")
 	}
+	if err := a.guardPath(path); err != nil {
+		return err
+	}
 	return exec.Command("open", "-R", path).Run()
 }
 
 // CountFilesInFolder returns the number of regular files directly inside
-// folder (non-recursive). Used to flag the Audi MMI 5000-files-per-dir limit.
+// folder (non-recursive). Used to flag the Audi MMI 5000-files-per-dir
+// limit. Folder must be the configured DownloadFolder or a sub-folder.
 func (a *App) CountFilesInFolder(folder string) (int, error) {
 	if folder == "" {
 		return 0, nil
+	}
+	if err := a.guardPath(folder); err != nil {
+		return 0, err
 	}
 	abs, _ := filepath.Abs(folder)
 	entries, err := readDir(abs)
@@ -236,6 +303,26 @@ func (a *App) CountFilesInFolder(folder string) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// guardPath rejects paths that are not inside the configured download folder.
+// Defense-in-depth: even though only our own frontend calls these methods,
+// the persisted job list could theoretically carry a hostile path through
+// a corrupt jobs.json.
+func (a *App) guardPath(p string) error {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return fmt.Errorf("resolve path: %w", err)
+	}
+	root, err := filepath.Abs(a.settings.Get().DownloadFolder)
+	if err != nil {
+		return fmt.Errorf("resolve download folder: %w", err)
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+		return fmt.Errorf("path is outside the download folder: %s", p)
+	}
+	return nil
 }
 
 // CheckTools probes yt-dlp and ffmpeg.

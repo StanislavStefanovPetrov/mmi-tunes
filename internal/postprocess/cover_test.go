@@ -54,7 +54,7 @@ func decodeBounds(t *testing.T, b []byte) (int, int) {
 
 func TestResizeJPEG_Landscape1280x720(t *testing.T) {
 	src := makeJPEG(t, 1280, 720)
-	out, mime, err := ResizeJPEG(src, 800, 90)
+	out, mime, _, err := ResizeJPEG(src, 800, 90)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestResizeJPEG_Landscape1280x720(t *testing.T) {
 
 func TestResizeJPEG_Portrait720x1280(t *testing.T) {
 	src := makeJPEG(t, 720, 1280)
-	out, _, err := ResizeJPEG(src, 800, 90)
+	out, _, _, err := ResizeJPEG(src, 800, 90)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestResizeJPEG_Portrait720x1280(t *testing.T) {
 
 func TestResizeJPEG_Square2000x2000(t *testing.T) {
 	src := makeJPEG(t, 2000, 2000)
-	out, _, err := ResizeJPEG(src, 800, 90)
+	out, _, _, err := ResizeJPEG(src, 800, 90)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestResizeJPEG_Square2000x2000(t *testing.T) {
 
 func TestResizeJPEG_AlreadySmallEnough(t *testing.T) {
 	src := makeJPEG(t, 600, 400)
-	out, mime, err := ResizeJPEG(src, 800, 90)
+	out, mime, _, err := ResizeJPEG(src, 800, 90)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestResizeJPEG_AlreadySmallEnough(t *testing.T) {
 
 func TestResizeJPEG_PNGInputConvertedToJPEG(t *testing.T) {
 	src := makePNG(t, 1500, 1000)
-	out, mime, err := ResizeJPEG(src, 800, 90)
+	out, mime, _, err := ResizeJPEG(src, 800, 90)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,16 +123,45 @@ func TestResizeJPEG_PNGInputConvertedToJPEG(t *testing.T) {
 
 func TestResizeJPEG_InvalidMaxPx(t *testing.T) {
 	src := makeJPEG(t, 100, 100)
-	if _, _, err := ResizeJPEG(src, 0, 90); err == nil {
+	if _, _, _, err := ResizeJPEG(src, 0, 90); err == nil {
 		t.Error("expected error for maxPx=0")
 	}
-	if _, _, err := ResizeJPEG(src, -10, 90); err == nil {
+	if _, _, _, err := ResizeJPEG(src, -10, 90); err == nil {
 		t.Error("expected error for negative maxPx")
 	}
 }
 
 func TestResizeJPEG_GarbageInput(t *testing.T) {
-	if _, _, err := ResizeJPEG([]byte("not an image"), 800, 90); err == nil {
+	if _, _, _, err := ResizeJPEG([]byte("not an image"), 800, 90); err == nil {
 		t.Error("expected error for garbage input")
+	}
+}
+
+func TestResizeJPEG_ChangedFlag(t *testing.T) {
+	bigSrc := makeJPEG(t, 1500, 1000)
+	_, _, changed, err := ResizeJPEG(bigSrc, 800, 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Error("expected changed=true for oversized JPEG")
+	}
+
+	smallSrc := makeJPEG(t, 600, 400)
+	_, _, changed, err = ResizeJPEG(smallSrc, 800, 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Error("expected changed=false for small JPEG")
+	}
+
+	pngSrc := makePNG(t, 600, 400)
+	_, _, changed, err = ResizeJPEG(pngSrc, 800, 90)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Error("expected changed=true for PNG (re-encoded to JPEG)")
 	}
 }

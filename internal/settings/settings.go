@@ -121,8 +121,8 @@ func clamp(s Settings) Settings {
 	if s.Concurrency < 1 {
 		s.Concurrency = 1
 	}
-	if s.Concurrency > 10 {
-		s.Concurrency = 10
+	if s.Concurrency > 5 {
+		s.Concurrency = 5
 	}
 	if s.ThumbnailMaxPx < 100 {
 		s.ThumbnailMaxPx = 100

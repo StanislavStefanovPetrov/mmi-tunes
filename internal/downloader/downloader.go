@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -84,6 +86,13 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 		return nil, &Error{Code: ErrUnknown, Message: err.Error()}
 	}
 
+	if s.DownloadFolder == "" {
+		return nil, &Error{Code: ErrFolderMissing, Message: "Download folder is not set."}
+	}
+	if err := os.MkdirAll(s.DownloadFolder, 0o755); err != nil {
+		return nil, &Error{Code: ErrFolderMissing, Message: "Cannot create download folder: " + err.Error()}
+	}
+
 	onProgress(Progress{Stage: StageMetadata, Message: "Fetching video metadata…"})
 	meta, err := fetchMetadata(ctx, canonical)
 	if err != nil {
@@ -107,6 +116,9 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
+		// cmd.Wait() never runs, so close the pipe ourselves to avoid
+		// leaking the file descriptor.
+		_ = stdout.Close()
 		return nil, &Error{Code: ErrUnknown, Message: err.Error()}
 	}
 
@@ -114,7 +126,9 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		streamProgress(stdout, onProgress)
+		if scanErr := streamProgress(stdout, onProgress); scanErr != nil {
+			log.Printf("downloader: progress scanner: %v", scanErr)
+		}
 	}()
 
 	waitErr := cmd.Wait()
@@ -210,15 +224,16 @@ func buildYtDlpArgs(url, outputTemplate string, s Settings) []string {
 	return args
 }
 
-func streamProgress(r io.Reader, onProgress func(Progress)) {
+func streamProgress(r io.Reader, onProgress func(Progress)) error {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if p, ok := parseProgressLine(line); ok {
 			onProgress(p)
 		}
 	}
+	return scanner.Err()
 }
 
 func clamp(v, lo, hi int) int {

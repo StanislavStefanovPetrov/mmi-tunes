@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useStore, type Settings } from '../store/jobs'
-import { PickFolder } from '../../wailsjs/go/main/App'
+import { GetSettings, PickFolder } from '../../wailsjs/go/main/App'
 
 interface Props {
   open: boolean
@@ -22,9 +22,13 @@ export function SettingsDrawer({ open, onClose }: Props) {
     setDraft({ ...draft, [key]: value })
   }
 
-  const persist = (next: Settings) => {
+  // After every save, re-read from disk so the UI shows the clamped values
+  // (e.g. user typed 1000 kbps → backend clamps to 320, drawer should reflect that).
+  const persist = async (next: Settings) => {
     setDraft(next)
-    save(next)
+    await save(next)
+    const reloaded = await GetSettings()
+    setDraft(reloaded)
   }
 
   const applyMMIPreset = () => {
@@ -89,7 +93,7 @@ export function SettingsDrawer({ open, onClose }: Props) {
         </Section>
 
         <Section title="Behaviour">
-          <NumberRow label="Concurrent downloads" value={draft.concurrency} min={1} max={5} step={1} onChange={(v) => update('concurrency', v)} />
+          <NumberRow label="Concurrent downloads" value={draft.concurrency} min={1} max={5} step={1} onChange={(v) => persist({ ...draft, concurrency: v })} />
           <BoolRow label="Cyrillic → Latin transliteration" checked={draft.transliterate} onChange={(v) => persist({ ...draft, transliterate: v })} />
           <BoolRow label="Skip already-downloaded videos" checked={draft.dedup_history} onChange={(v) => persist({ ...draft, dedup_history: v })} />
           <BoolRow label="Auto-detect YouTube URLs in clipboard" checked={draft.auto_detect_clipboard} onChange={(v) => persist({ ...draft, auto_detect_clipboard: v })} />

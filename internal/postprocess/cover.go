@@ -6,7 +6,6 @@ import (
 	"image"
 	"image/jpeg"
 	_ "image/png"
-	"io"
 
 	"github.com/bogem/id3v2/v2"
 	"golang.org/x/image/draw"
@@ -17,24 +16,24 @@ const MaxCoverPx = 800
 
 // ResizeJPEG re-encodes img bytes to a JPEG no larger than maxPx in either
 // dimension, preserving aspect ratio. Returns the original bytes (with the
-// "image/jpeg" mime type) if the image already fits within maxPx.
+// "image/jpeg" mime type) and changed=false if the image already fits.
 //
 // Accepts JPEG and PNG inputs; output is always JPEG. quality is 1..100.
-func ResizeJPEG(img []byte, maxPx int, quality int) ([]byte, string, error) {
+func ResizeJPEG(img []byte, maxPx int, quality int) (out []byte, mime string, changed bool, err error) {
 	if maxPx <= 0 {
-		return nil, "", fmt.Errorf("maxPx must be positive, got %d", maxPx)
+		return nil, "", false, fmt.Errorf("maxPx must be positive, got %d", maxPx)
 	}
 
-	src, format, err := image.Decode(bytes.NewReader(img))
-	if err != nil {
-		return nil, "", fmt.Errorf("decode image: %w", err)
+	src, format, decodeErr := image.Decode(bytes.NewReader(img))
+	if decodeErr != nil {
+		return nil, "", false, fmt.Errorf("decode image: %w", decodeErr)
 	}
 
 	bounds := src.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
 	if w <= maxPx && h <= maxPx && format == "jpeg" {
 		// Already fits and already JPEG — keep as-is.
-		return img, "image/jpeg", nil
+		return img, "image/jpeg", false, nil
 	}
 
 	// Compute target size preserving aspect ratio.
@@ -56,10 +55,10 @@ func ResizeJPEG(img []byte, maxPx int, quality int) ([]byte, string, error) {
 	if quality <= 0 || quality > 100 {
 		quality = 90
 	}
-	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: quality}); err != nil {
-		return nil, "", fmt.Errorf("encode jpeg: %w", err)
+	if encErr := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: quality}); encErr != nil {
+		return nil, "", false, fmt.Errorf("encode jpeg: %w", encErr)
 	}
-	return buf.Bytes(), "image/jpeg", nil
+	return buf.Bytes(), "image/jpeg", true, nil
 }
 
 // ResizeCoverArtInMP3 inspects every APIC (attached picture) frame in path's
@@ -80,7 +79,7 @@ func ResizeCoverArtInMP3(path string, maxPx int) error {
 		return nil
 	}
 
-	changed := false
+	anyChanged := false
 	newFrames := make([]id3v2.Framer, 0, len(frames))
 	for _, f := range frames {
 		pic, ok := f.(id3v2.PictureFrame)
@@ -88,11 +87,11 @@ func ResizeCoverArtInMP3(path string, maxPx int) error {
 			newFrames = append(newFrames, f)
 			continue
 		}
-		resized, mime, err := ResizeJPEG(pic.Picture, maxPx, 90)
+		resized, mime, changed, err := ResizeJPEG(pic.Picture, maxPx, 90)
 		if err != nil {
 			return fmt.Errorf("resize cover: %w", err)
 		}
-		if &resized[0] == &pic.Picture[0] || bytes.Equal(resized, pic.Picture) {
+		if !changed {
 			newFrames = append(newFrames, f)
 			continue
 		}
@@ -103,10 +102,10 @@ func ResizeCoverArtInMP3(path string, maxPx int) error {
 			Description: pic.Description,
 			Picture:     resized,
 		})
-		changed = true
+		anyChanged = true
 	}
 
-	if !changed {
+	if !anyChanged {
 		return nil
 	}
 
@@ -119,7 +118,3 @@ func ResizeCoverArtInMP3(path string, maxPx int) error {
 	}
 	return nil
 }
-
-// readAll is a small convenience used by callers that already have an
-// io.Reader rather than bytes.
-func readAll(r io.Reader) ([]byte, error) { return io.ReadAll(r) }

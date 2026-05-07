@@ -13,7 +13,11 @@ import {
   StartAll,
 } from '../../wailsjs/go/main/App'
 import type { queue, settings, tools } from '../../wailsjs/go/models'
-import { EventsOn } from '../../wailsjs/runtime/runtime'
+import { EventsOff, EventsOn } from '../../wailsjs/runtime/runtime'
+
+// React 18 StrictMode invokes effects twice in dev, so init() can run twice.
+// We guard subscriptions at the module level to avoid double event handlers.
+let subscribedOnce = false
 
 type Job = queue.Job
 type Settings = settings.Settings
@@ -65,6 +69,13 @@ export const useStore = create<State>((set, get) => ({
     ])
     const indexed = indexJobs(jobsList || [])
     set({ jobs: indexed.jobs, jobOrder: indexed.order, settings: cfg, tools: toolStatus })
+
+    if (subscribedOnce) return
+    subscribedOnce = true
+
+    // Drop any stale handlers from a hot-reload before re-subscribing.
+    const eventNames = ['job:added', 'job:status', 'job:progress', 'job:done', 'job:error', 'job:removed']
+    for (const name of eventNames) EventsOff(name)
 
     EventsOn('job:added', (j: Job) => {
       const { jobs, jobOrder } = get()
@@ -131,8 +142,9 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async clearCompleted() {
+    // The Go side emits a job:removed event for each cleared job, so the
+    // store updates incrementally — no full reload needed.
     await ClearCompleted()
-    await get().reload()
   },
 
   async saveSettings(s) {

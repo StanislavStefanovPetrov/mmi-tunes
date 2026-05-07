@@ -2,8 +2,12 @@ package queue
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
@@ -44,11 +48,12 @@ type Queue struct {
 	stop chan struct{}
 	wg   sync.WaitGroup
 
+	stopOnce sync.Once
+	stopped  chan struct{} // closed once events channel is fully drained
+
 	downloader Downloader
 	settings   func() downloader.Settings // re-read each run, not snapshotted
 	events     chan Event
-
-	idCounter int
 }
 
 // New constructs a Queue. settings is a closure so the caller can change
@@ -62,6 +67,7 @@ func New(concurrency int, dl Downloader, settings func() downloader.Settings) *Q
 		concurrency: concurrency,
 		work:        make(chan string, 1024),
 		stop:        make(chan struct{}),
+		stopped:     make(chan struct{}),
 		downloader:  dl,
 		settings:    settings,
 		events:      make(chan Event, 256),
@@ -70,6 +76,7 @@ func New(concurrency int, dl Downloader, settings func() downloader.Settings) *Q
 		q.wg.Add(1)
 		go q.worker()
 	}
+	go q.eventCloser()
 	return q
 }
 
@@ -77,21 +84,33 @@ func New(concurrency int, dl Downloader, settings func() downloader.Settings) *Q
 // it promptly; if the channel buffer (256) fills up, events are dropped.
 func (q *Queue) Events() <-chan Event { return q.events }
 
-// Stop signals all workers to finish current jobs and exit. Blocks until
-// done. Future Add() / StartAll() calls become no-ops after Stop.
+// Stop signals all workers to finish current jobs and exit. Idempotent —
+// calling twice is safe. Blocks until all workers exit and the events
+// channel is fully drained/closed. emit() becomes a no-op after Stop.
 func (q *Queue) Stop() {
-	close(q.stop)
-	close(q.work)
+	q.stopOnce.Do(func() {
+		close(q.stop)
+		close(q.work)
+		q.wg.Wait()
+	})
+	<-q.stopped
+}
+
+// eventCloser waits for all workers to finish, then closes events.
+// Running this from a dedicated goroutine means emit() can race with Stop()
+// safely: emit checks stop before sending, and the events channel is only
+// closed after every worker has returned.
+func (q *Queue) eventCloser() {
 	q.wg.Wait()
 	close(q.events)
+	close(q.stopped)
 }
 
 // Add inserts a new job in StatusQueued without starting it. Returns the
 // created Job snapshot. URL must already be canonicalized by the caller.
 func (q *Queue) Add(url string) Job {
 	q.mu.Lock()
-	q.idCounter++
-	id := fmt.Sprintf("job-%d-%d", time.Now().UnixNano(), q.idCounter)
+	id := newJobID()
 	j := &Job{
 		ID: id, URL: url, Status: StatusQueued, AddedAt: time.Now(),
 	}
@@ -126,9 +145,6 @@ func (q *Queue) Remove(id string) bool {
 		q.mu.Unlock()
 		return false
 	}
-	if j.cancel != nil {
-		j.cancel()
-	}
 	delete(q.jobs, id)
 	for i, oid := range q.order {
 		if oid == id {
@@ -137,6 +153,16 @@ func (q *Queue) Remove(id string) bool {
 		}
 	}
 	q.mu.Unlock()
+
+	// Capture cancel under j.mu, release before invoking — the cancel func
+	// may synchronously trigger callbacks that re-take j.mu.
+	j.mu.Lock()
+	cancelFn := j.cancel
+	j.cancel = nil
+	j.mu.Unlock()
+	if cancelFn != nil {
+		cancelFn()
+	}
 	q.emit(Event{Kind: EventRemoved, Job: Job{ID: id}})
 	return true
 }
@@ -147,17 +173,18 @@ func (q *Queue) StartAll() int {
 	ids := make([]string, 0, len(q.order))
 	for _, id := range q.order {
 		j := q.jobs[id]
-		if j != nil {
-			j.mu.RLock()
-			s := j.Status
-			j.mu.RUnlock()
-			if s == StatusQueued || s == StatusError || s == StatusCancelled {
-				if s != StatusQueued {
-					j.setStatus(StatusQueued)
-					q.emit(Event{Kind: EventStatus, Job: j.Snapshot()})
-				}
-				ids = append(ids, id)
+		if j == nil {
+			continue
+		}
+		j.mu.RLock()
+		s := j.Status
+		j.mu.RUnlock()
+		if s == StatusQueued || s == StatusError || s == StatusCancelled {
+			if s != StatusQueued {
+				j.setStatus(StatusQueued)
+				q.emit(Event{Kind: EventStatus, Job: j.Snapshot()})
 			}
+			ids = append(ids, id)
 		}
 	}
 	q.mu.Unlock()
@@ -172,7 +199,9 @@ func (q *Queue) StartAll() int {
 	return len(ids)
 }
 
-// Cancel a single in-flight job.
+// Cancel a single in-flight job. Captures the cancel func under lock then
+// invokes it after releasing the lock — the downloader's progress callback
+// also takes j.mu, so calling cancel() while holding it would deadlock.
 func (q *Queue) Cancel(id string) bool {
 	q.mu.Lock()
 	j, ok := q.jobs[id]
@@ -180,13 +209,16 @@ func (q *Queue) Cancel(id string) bool {
 	if !ok {
 		return false
 	}
+
 	j.mu.Lock()
-	if j.cancel != nil {
-		j.cancel()
+	cancelFn := j.cancel
+	if cancelFn != nil {
+		// Running: invoke cancel after unlocking.
+		j.cancel = nil
 		j.mu.Unlock()
+		cancelFn()
 		return true
 	}
-	// Not running yet — flip to cancelled directly.
 	if j.Status == StatusQueued {
 		j.Status = StatusCancelled
 		now := time.Now()
@@ -232,11 +264,17 @@ func (q *Queue) List() []Job {
 // ClearCompleted removes every Done/Cancelled job. Returns count removed.
 func (q *Queue) ClearCompleted() int {
 	q.mu.Lock()
-	keep := q.order[:0]
+	keep := make([]string, 0, len(q.order))
 	removed := []string{}
 	for _, id := range q.order {
 		j := q.jobs[id]
+		if j == nil {
+			// Drift between order and jobs map — skip ghosts.
+			continue
+		}
+		j.mu.RLock()
 		s := j.Status
+		j.mu.RUnlock()
 		if s == StatusDone || s == StatusCancelled {
 			delete(q.jobs, id)
 			removed = append(removed, id)
@@ -264,7 +302,11 @@ func (q *Queue) Sort() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	sort.SliceStable(q.order, func(i, k int) bool {
-		return q.jobs[q.order[i]].AddedAt.Before(q.jobs[q.order[k]].AddedAt)
+		ji, jk := q.jobs[q.order[i]], q.jobs[q.order[k]]
+		if ji == nil || jk == nil {
+			return false
+		}
+		return ji.AddedAt.Before(jk.AddedAt)
 	})
 }
 
@@ -277,8 +319,27 @@ func (q *Queue) worker() {
 			return
 		default:
 		}
-		q.runJob(id)
+		q.runJobSafe(id)
 	}
+}
+
+// runJobSafe wraps runJob with panic recovery. A bug in the downloader
+// (or one of its dependencies) should kill the job, not the worker.
+func (q *Queue) runJobSafe(id string) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("queue: worker panic on job %s: %v\n%s", id, r, debug.Stack())
+			q.mu.Lock()
+			j := q.jobs[id]
+			q.mu.Unlock()
+			if j != nil {
+				j.setError(downloader.ErrUnknown, fmt.Sprintf("internal panic: %v", r))
+				j.setStatus(StatusError)
+				q.emit(Event{Kind: EventError, Job: j.Snapshot()})
+			}
+		}
+	}()
+	q.runJob(id)
 }
 
 func (q *Queue) runJob(id string) {
@@ -291,11 +352,11 @@ func (q *Queue) runJob(id string) {
 
 	// Skip if cancelled while sitting in the queue.
 	j.mu.RLock()
-	if j.Status == StatusCancelled {
-		j.mu.RUnlock()
+	cancelledEarly := j.Status == StatusCancelled
+	j.mu.RUnlock()
+	if cancelledEarly {
 		return
 	}
-	j.mu.RUnlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	j.mu.Lock()
@@ -335,11 +396,30 @@ func (q *Queue) runJob(id string) {
 	q.emit(Event{Kind: EventDone, Job: j.Snapshot()})
 }
 
-// emit pushes an event without blocking. If the buffer is full, the event
-// is dropped — UI will resync on next user action.
+// emit pushes an event without blocking. If Stop has been called or the
+// channel buffer (256) is full, the event is dropped — UI will resync
+// on next user action.
 func (q *Queue) emit(ev Event) {
 	select {
-	case q.events <- ev:
+	case <-q.stop:
+		return
 	default:
 	}
+	select {
+	case q.events <- ev:
+	case <-q.stop:
+	default:
+	}
+}
+
+// newJobID returns a collision-resistant ID. UUIDv4-style, 16 random bytes
+// hex-encoded — survives clock skew, NTP jumps, and process restarts.
+func newJobID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failure on modern macOS is impossibly rare; fall
+		// back to time-based to keep the API total.
+		return fmt.Sprintf("job-%d", time.Now().UnixNano())
+	}
+	return "job-" + hex.EncodeToString(b[:])
 }
