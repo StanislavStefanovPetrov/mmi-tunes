@@ -171,14 +171,19 @@ Maybe next:
 macOS apps are self-contained — there is no separate uninstaller:
 
 ```bash
-rm -rf "/Applications/MMI Tunes.app"
+# The .pkg installs as root:wheel (standard macOS behaviour for pkgs),
+# so removing the app from /Applications needs sudo.
+sudo rm -rf "/Applications/MMI Tunes.app"
 
-# Optional: also forget settings, history, and the saved job list.
+# Optional: also forget settings, history, and the saved job list
+# (these are owned by you, no sudo).
 rm -rf "$HOME/Library/Application Support/MMI Tunes"
 
 # Optional: also delete the downloaded MP3s.
 rm -rf "$HOME/Music/MMI Tunes"
 ```
+
+You can also drag `MMI Tunes.app` from Finder to Trash — Finder prompts for the password and uses admin privileges automatically.
 
 ## License
 
