@@ -234,6 +234,22 @@ func (a *App) IsAlreadyDownloaded(rawURL string) (bool, error) {
 	return a.history.Has(id), nil
 }
 
+// LookupHistory returns the existing download record for a URL, or a
+// zero-value record if not found. The frontend uses this to render a
+// dedup prompt with the file path and a Reveal-in-Finder action.
+//
+// Returns the zero record + nil error when the URL has not been
+// downloaded — letting the caller treat "no record" as a normal case
+// instead of an error.
+func (a *App) LookupHistory(rawURL string) (history.Record, error) {
+	id, err := urlpkg.ExtractVideoID(rawURL)
+	if err != nil {
+		return history.Record{}, err
+	}
+	rec, _ := a.history.Get(id)
+	return rec, nil
+}
+
 // RemoveJob deletes a job from the queue (cancels first if running).
 func (a *App) RemoveJob(id string) bool { return a.queue.Remove(id) }
 
@@ -279,6 +295,22 @@ func (a *App) RevealInFinder(path string) error {
 		return err
 	}
 	return exec.Command("open", "-R", path).Run()
+}
+
+// RevealHistoryItem opens the file for a given videoID in Finder, looking
+// up the path through the trusted history store rather than accepting it
+// from the frontend. This bypasses guardPath because the path was written
+// by this app — handy when the user has changed DownloadFolder since the
+// file was downloaded and the old path now lives outside the current root.
+func (a *App) RevealHistoryItem(videoID string) error {
+	rec, ok := a.history.Get(videoID)
+	if !ok || rec.OutputPath == "" {
+		return errors.New("not in history")
+	}
+	if runtime.GOOS != "darwin" {
+		return errors.New("RevealInFinder only supported on macOS")
+	}
+	return exec.Command("open", "-R", rec.OutputPath).Run()
 }
 
 // CountFilesInFolder returns the number of regular files directly inside

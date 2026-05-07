@@ -1,11 +1,23 @@
 import { useState, useEffect, KeyboardEvent } from 'react'
 import { useStore } from '../store/jobs'
-import { GetClipboardURL } from '../../wailsjs/go/main/App'
+import {
+  AddURLForce,
+  GetClipboardURL,
+  LookupHistory,
+  RevealHistoryItem,
+} from '../../wailsjs/go/main/App'
+import type { history } from '../../wailsjs/go/models'
+
+interface DedupPrompt {
+  url: string
+  record: history.Record
+}
 
 export function AddUrlBar() {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [clipboardSuggestion, setClipboardSuggestion] = useState<string | null>(null)
+  const [dedup, setDedup] = useState<DedupPrompt | null>(null)
   const addUrl = useStore((s) => s.addUrl)
   const settings = useStore((s) => s.settings)
 
@@ -22,7 +34,7 @@ export function AddUrlBar() {
           setClipboardSuggestion(null)
         }
       } catch {
-        // Ignore — clipboard polling is best-effort.
+        // best-effort
       }
     }
     tick()
@@ -35,8 +47,36 @@ export function AddUrlBar() {
 
   const submit = async (url: string) => {
     setError(null)
+    setDedup(null)
+
+    // Check history first so we can show a rich dedup prompt with the
+    // existing file's path + a Reveal-in-Finder action.
+    if (settings?.dedup_history) {
+      try {
+        const existing = await LookupHistory(url)
+        if (existing && existing.video_id) {
+          setDedup({ url, record: existing })
+          return
+        }
+      } catch {
+        // Fall through — invalid URL will be caught by AddURL below.
+      }
+    }
+
     try {
       await addUrl(url)
+      setValue('')
+      setClipboardSuggestion(null)
+    } catch (e: any) {
+      setError(String(e?.message ?? e))
+    }
+  }
+
+  const downloadAnyway = async () => {
+    if (!dedup) return
+    try {
+      await AddURLForce(dedup.url)
+      setDedup(null)
       setValue('')
       setClipboardSuggestion(null)
     } catch (e: any) {
@@ -49,6 +89,8 @@ export function AddUrlBar() {
       submit(value.trim())
     }
   }
+
+  const filename = (path: string) => path.split('/').pop() || path
 
   return (
     <div className="flex flex-col gap-1">
@@ -71,7 +113,7 @@ export function AddUrlBar() {
 
       {error && <div className="text-xs text-red-400">{error}</div>}
 
-      {clipboardSuggestion && clipboardSuggestion !== value && (
+      {clipboardSuggestion && clipboardSuggestion !== value && !dedup && (
         <button
           onClick={() => submit(clipboardSuggestion)}
           className="text-left text-xs text-blue-400 hover:underline"
@@ -79,6 +121,47 @@ export function AddUrlBar() {
         >
           📋 Add from clipboard: {clipboardSuggestion}
         </button>
+      )}
+
+      {dedup && (
+        <div className="mt-1 rounded-md border border-yellow-700 bg-yellow-900/30 p-3 text-xs text-yellow-100">
+          <div className="font-semibold text-yellow-200">
+            Already downloaded
+          </div>
+          <div className="mt-1 truncate" title={dedup.record.title}>
+            {dedup.record.title || filename(dedup.record.output_path)}
+          </div>
+          <div
+            className="mt-0.5 truncate text-[11px] text-yellow-300/80"
+            title={dedup.record.output_path}
+          >
+            {dedup.record.output_path}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              onClick={() => RevealHistoryItem(dedup.record.video_id)}
+              className="rounded bg-yellow-700 px-2 py-1 text-[11px] font-medium text-white hover:bg-yellow-600"
+            >
+              📁 Reveal in Finder
+            </button>
+            <button
+              onClick={downloadAnyway}
+              className="rounded bg-neutral-700 px-2 py-1 text-[11px] text-white hover:bg-neutral-600"
+            >
+              Download anyway
+            </button>
+            <button
+              onClick={() => {
+                setDedup(null)
+                setValue('')
+                setClipboardSuggestion(null)
+              }}
+              className="rounded bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
