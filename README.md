@@ -35,10 +35,7 @@ Every output MP3 hits the Audi MMI 3G+ spec sheet:
 | Filename | FAT32-safe (no `\ / : * ? " < > \|`) | **Sanitised + transliterated** |
 | Files per directory | ≤ 5000 | Pre-flight warning |
 
-The numbers in the table above are taken straight from Audi's MMI manual page **Controls ▸ Media drives/connections ▸ Supported media and file formats**. See:
-
-- [AudiWorld Forum thread referencing the spec sheet (MMI 3G)](https://www.audiworld.com/forums/q5-sq5-mki-8r-discussion-129/mmi-3g-largest-sd-card-size-2872958/)
-- Original spec image: [`Audi_MMI_pytube_mp3` repo by @StanislavStefanovPetrov](https://github.com/StanislavStefanovPetrov/Audi_MMI_pytube_mp3) — predecessor CLI script which inspired this app.
+The numbers in the table above come straight from Audi's MMI manual page **Controls ▸ Media drives/connections ▸ Supported media and file formats**. The full spec sheet is also documented in [this AudiWorld forum thread](https://www.audiworld.com/forums/q5-sq5-mki-8r-discussion-129/mmi-3g-largest-sd-card-size-2872958/).
 
 Tested on **Audi MMI 3G+** (Audi Q7 4LB).
 
