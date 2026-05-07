@@ -168,6 +168,33 @@ func (q *Queue) Remove(id string) bool {
 	return true
 }
 
+// StartJob queues a single job for execution. If the job is in error
+// or cancelled status it is reset to queued first. Returns true if the
+// job exists and was queued; false if the job doesn't exist or is
+// already running/done.
+func (q *Queue) StartJob(id string) bool {
+	q.mu.Lock()
+	js, ok := q.jobs[id]
+	q.mu.Unlock()
+	if !ok || js == nil {
+		return false
+	}
+	s := js.status()
+	if s == StatusRunning || s == StatusDone {
+		return false
+	}
+	if s != StatusQueued {
+		js.setStatus(StatusQueued)
+		q.emit(Event{Kind: EventStatus, Job: js.snapshot()})
+	}
+	select {
+	case <-q.stop:
+		return false
+	case q.work <- id:
+		return true
+	}
+}
+
 // StartAll queues every job currently in StatusQueued for execution.
 func (q *Queue) StartAll() int {
 	q.mu.Lock()

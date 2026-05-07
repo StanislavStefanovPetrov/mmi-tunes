@@ -36,6 +36,7 @@ function formatStage(j: Job): string {
 export function UrlRow({ job }: { job: Job }) {
   const removeJob = useStore((s) => s.removeJob)
   const cancelJob = useStore((s) => s.cancelJob)
+  const startJob = useStore((s) => s.startJob)
 
   const showProgress = job.status === 'running'
   const pct = Math.max(0, Math.min(100, job.progress?.percent ?? 0))
@@ -56,6 +57,15 @@ export function UrlRow({ job }: { job: Job }) {
         </div>
 
         <div className="flex shrink-0 gap-1">
+          {(job.status === 'queued' || job.status === 'error' || job.status === 'cancelled') && (
+            <button
+              onClick={() => startJob(job.id)}
+              className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-500"
+              title={job.status === 'error' || job.status === 'cancelled' ? 'Retry download' : 'Download this clip'}
+            >
+              {job.status === 'queued' ? '⬇' : '↻'}
+            </button>
+          )}
           {job.status === 'done' && job.output_path && (
             <button
               onClick={() => RevealInFinder(job.output_path!)}

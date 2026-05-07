@@ -11,6 +11,7 @@ import {
   RemoveJob,
   SaveSettings,
   StartAll,
+  StartJob,
 } from '../../wailsjs/go/main/App'
 import type { queue, settings, tools } from '../../wailsjs/go/models'
 import { EventsOff, EventsOn } from '../../wailsjs/runtime/runtime'
@@ -45,6 +46,7 @@ interface State {
   removeJob(id: string): Promise<void>
   cancelJob(id: string): Promise<void>
   cancelAll(): Promise<void>
+  startJob(id: string): Promise<void>
   startAll(): Promise<void>
   clearCompleted(): Promise<void>
   saveSettings(s: Settings): Promise<void>
@@ -143,6 +145,10 @@ export const useStore = create<State>((set, get) => ({
 
   async cancelAll() {
     await CancelAll()
+  },
+
+  async startJob(id) {
+    await StartJob(id)
   },
 
   async startAll() {

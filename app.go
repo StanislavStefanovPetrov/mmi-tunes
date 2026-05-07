@@ -262,6 +262,10 @@ func (a *App) ClearCompleted() int { return a.queue.ClearCompleted() }
 // StartAll queues every queued/error/cancelled job for execution.
 func (a *App) StartAll() int { return a.queue.StartAll() }
 
+// StartJob queues a single job for execution. Used by the per-row
+// download button.
+func (a *App) StartJob(id string) bool { return a.queue.StartJob(id) }
+
 // CancelJob cancels a single job.
 func (a *App) CancelJob(id string) bool { return a.queue.Cancel(id) }
 
