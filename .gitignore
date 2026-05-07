@@ -43,5 +43,8 @@ frontend/vite.config.js
 
 # OS
 .DS_Store
-tools/
-dist/
+
+# Build artifacts (downloaded yt-dlp/ffmpeg + .pkg installer)
+# Anchor with leading slash so internal/tools/ is NOT matched.
+/tools/
+/dist/
