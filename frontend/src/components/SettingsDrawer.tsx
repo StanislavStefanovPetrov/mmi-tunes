@@ -11,9 +11,16 @@ export function SettingsDrawer({ open, onClose }: Props) {
   const settings = useStore((s) => s.settings)
   const save = useStore((s) => s.saveSettings)
   const [draft, setDraft] = useState<Settings | null>(null)
+  // Concurrency only takes effect at app launch (queue is constructed
+  // once); track the at-launch value so we can show a "restart required"
+  // hint when the user changes it.
+  const [launchConcurrency, setLaunchConcurrency] = useState<number | null>(null)
 
   useEffect(() => {
-    if (settings) setDraft({ ...settings })
+    if (settings) {
+      setDraft({ ...settings })
+      setLaunchConcurrency((prev) => prev ?? settings.concurrency)
+    }
   }, [settings])
 
   if (!open || !draft) return null
@@ -94,6 +101,11 @@ export function SettingsDrawer({ open, onClose }: Props) {
 
         <Section title="Behaviour">
           <NumberRow label="Concurrent downloads" value={draft.concurrency} min={1} max={5} step={1} onChange={(v) => persist({ ...draft, concurrency: v })} />
+          {launchConcurrency !== null && draft.concurrency !== launchConcurrency && (
+            <div className="text-[11px] text-yellow-400">
+              ⚠ Restart MMI Tunes for the new concurrency to take effect.
+            </div>
+          )}
           <BoolRow label="Cyrillic → Latin transliteration" checked={draft.transliterate} onChange={(v) => persist({ ...draft, transliterate: v })} />
           <BoolRow label="Skip already-downloaded videos" checked={draft.dedup_history} onChange={(v) => persist({ ...draft, dedup_history: v })} />
           <BoolRow label="Auto-detect YouTube URLs in clipboard" checked={draft.auto_detect_clipboard} onChange={(v) => persist({ ...draft, auto_detect_clipboard: v })} />
@@ -101,7 +113,7 @@ export function SettingsDrawer({ open, onClose }: Props) {
         </Section>
 
         <p className="mt-4 text-[11px] text-neutral-500">
-          Concurrency takes effect on next app launch. All other changes apply to new downloads immediately.
+          All settings (except concurrency) apply to new downloads immediately.
         </p>
       </div>
     </div>

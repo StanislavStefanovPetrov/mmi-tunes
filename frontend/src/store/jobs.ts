@@ -19,6 +19,14 @@ import { EventsOff, EventsOn } from '../../wailsjs/runtime/runtime'
 // We guard subscriptions at the module level to avoid double event handlers.
 let subscribedOnce = false
 
+// Vite HMR persists module-level state across hot reloads. Without this
+// reset, init() short-circuits after a hot reload and we lose all events.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    subscribedOnce = false
+  })
+}
+
 type Job = queue.Job
 type Settings = settings.Settings
 type ToolStatus = tools.AllStatus

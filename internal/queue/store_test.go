@@ -152,16 +152,79 @@ func TestQueue_PanicInDownloaderRecovers(t *testing.T) {
 	}
 	q := New(1, dl, func() downloader.Settings { return downloader.MMIDefaults("/tmp") })
 	defer q.Stop()
-	q.Add("u")
+	added := q.Add("u")
 	q.StartAll()
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		jobs := q.List()
-		if len(jobs) > 0 && jobs[0].Status == StatusError {
-			return
+	// Wait for the error event from the queue's event channel rather than
+	// time-based polling — eliminates flakiness on a loaded CI box.
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev, ok := <-q.Events():
+			if !ok {
+				t.Fatal("events channel closed before error event")
+			}
+			if ev.Kind == EventError && ev.Job.ID == added.ID {
+				goto recovered
+			}
+		case <-deadline:
+			t.Fatalf("worker did not recover from panic, jobs=%+v", q.List())
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	t.Errorf("worker did not recover from panic, jobs=%+v", q.List())
+recovered:
+	// And the cancel func must have been cleared by the deferred
+	// cleanup, even though the downloader panicked.
+	jobs := q.List()
+	if len(jobs) != 1 || jobs[0].Status != StatusError {
+		t.Errorf("expected exactly 1 job in StatusError, got %+v", jobs)
+	}
+	// Cancel on a dead job should now return false (no live cancel func).
+	if q.Cancel(added.ID) {
+		t.Error("Cancel on errored job returned true; stale cancel func leaked")
+	}
+}
+
+// TestQueue_StartAllRacesStop reproduces the send-on-closed-channel scenario
+// the second reviewer found. Without the worker-loop fix, this panics
+// reliably under -race when StartAll fires concurrently with Stop.
+func TestQueue_StartAllRacesStop(t *testing.T) {
+	for trial := 0; trial < 50; trial++ {
+		dl := func(ctx context.Context, url string, _ downloader.Settings, _ func(downloader.Progress)) (*downloader.Result, error) {
+			return &downloader.Result{VideoID: "v", Title: url, OutputPath: "/tmp/x.mp3"}, nil
+		}
+		q := New(2, dl, func() downloader.Settings { return downloader.MMIDefaults("/tmp") })
+		for i := 0; i < 20; i++ {
+			q.Add("u")
+		}
+		// Race the producer against the stopper.
+		done := make(chan struct{})
+		go func() {
+			q.StartAll()
+			close(done)
+		}()
+		q.Stop()
+		<-done
+	}
+}
+
+// TestQueue_EmitDuringStop fires events from the same goroutine while
+// Stop is winding down. With the eventCloser pattern emit() simply drops
+// events after stop closes — it must not panic.
+func TestQueue_EmitDuringStop(t *testing.T) {
+	released := make(chan struct{})
+	dl := func(ctx context.Context, url string, _ downloader.Settings, cb func(downloader.Progress)) (*downloader.Result, error) {
+		<-released
+		// One last event after stop has been signalled.
+		cb(downloader.Progress{Stage: downloader.StageDownload, Percent: 99})
+		return &downloader.Result{VideoID: "v", Title: url, OutputPath: "/tmp/x.mp3"}, nil
+	}
+	q := New(2, dl, func() downloader.Settings { return downloader.MMIDefaults("/tmp") })
+	for i := 0; i < 5; i++ {
+		q.Add("u")
+	}
+	q.StartAll()
+
+	go func() { time.Sleep(50 * time.Millisecond); close(released) }()
+	q.Stop()
+	// If we got here without panicking, emit() correctly handled stop.
 }

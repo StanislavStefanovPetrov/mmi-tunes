@@ -87,10 +87,15 @@ func (q *Queue) Events() <-chan Event { return q.events }
 // Stop signals all workers to finish current jobs and exit. Idempotent —
 // calling twice is safe. Blocks until all workers exit and the events
 // channel is fully drained/closed. emit() becomes a no-op after Stop.
+//
+// We deliberately do NOT close q.work here. StartAll() writes to q.work
+// inside a `select { case <-q.stop: ; case q.work <- id: }`; if work were
+// closed, both cases could be ready at once and Go's pseudo-random pick
+// would panic on send-to-closed-channel. Instead, workers exit when
+// q.stop closes (see worker()).
 func (q *Queue) Stop() {
 	q.stopOnce.Do(func() {
 		close(q.stop)
-		close(q.work)
 		q.wg.Wait()
 	})
 	<-q.stopped
@@ -311,15 +316,16 @@ func (q *Queue) Sort() {
 }
 
 // worker is one of `concurrency` goroutines pulling job IDs off q.work.
+// Exits when q.stop is closed; q.work is never closed (see Stop()).
 func (q *Queue) worker() {
 	defer q.wg.Done()
-	for id := range q.work {
+	for {
 		select {
 		case <-q.stop:
 			return
-		default:
+		case id := <-q.work:
+			q.runJobSafe(id)
 		}
-		q.runJobSafe(id)
 	}
 }
 
@@ -363,6 +369,16 @@ func (q *Queue) runJob(id string) {
 	j.cancel = cancel
 	j.mu.Unlock()
 
+	// Defer cancel-cleanup so a panic inside the downloader (caught by
+	// runJobSafe's recover) still clears j.cancel. Without this a stale
+	// CancelFunc would linger and Cancel() would return success on a
+	// dead job.
+	defer func() {
+		j.mu.Lock()
+		j.cancel = nil
+		j.mu.Unlock()
+	}()
+
 	j.setStatus(StatusRunning)
 	q.emit(Event{Kind: EventStatus, Job: j.Snapshot()})
 
@@ -370,10 +386,6 @@ func (q *Queue) runJob(id string) {
 		j.setProgress(p)
 		q.emit(Event{Kind: EventProgress, Job: j.Snapshot()})
 	})
-
-	j.mu.Lock()
-	j.cancel = nil
-	j.mu.Unlock()
 
 	if err != nil {
 		var dlErr *downloader.Error
