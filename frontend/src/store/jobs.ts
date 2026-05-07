@@ -5,6 +5,7 @@ import {
   CancelAll,
   CancelJob,
   CheckTools,
+  ClearAll,
   ClearCompleted,
   GetSettings,
   ListJobs,
@@ -49,6 +50,7 @@ interface State {
   startJob(id: string): Promise<void>
   startAll(): Promise<void>
   clearCompleted(): Promise<void>
+  clearAll(): Promise<void>
   saveSettings(s: Settings): Promise<void>
   setError(msg: string | null): void
 }
@@ -159,6 +161,10 @@ export const useStore = create<State>((set, get) => ({
     // The Go side emits a job:removed event for each cleared job, so the
     // store updates incrementally — no full reload needed.
     await ClearCompleted()
+  },
+
+  async clearAll() {
+    await ClearAll()
   },
 
   async saveSettings(s) {

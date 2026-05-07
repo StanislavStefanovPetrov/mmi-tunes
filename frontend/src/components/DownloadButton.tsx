@@ -6,6 +6,7 @@ export function DownloadButton() {
   const startAll = useStore((s) => s.startAll)
   const cancelAll = useStore((s) => s.cancelAll)
   const clearCompleted = useStore((s) => s.clearCompleted)
+  const clearAll = useStore((s) => s.clearAll)
 
   let queued = 0, running = 0, done = 0, error = 0
   for (const id of order) {
@@ -33,6 +34,19 @@ export function DownloadButton() {
         )}
       </div>
       <div className="flex gap-2">
+        {total > 0 && (
+          <button
+            onClick={() => {
+              if (confirm(`Remove all ${total} jobs from the list? Files already downloaded stay on disk.`)) {
+                clearAll()
+              }
+            }}
+            className="rounded bg-neutral-700 px-3 py-1.5 text-xs text-neutral-300 hover:bg-red-700 hover:text-white"
+            title="Remove every job from the list (files on disk stay)"
+          >
+            Clear all
+          </button>
+        )}
         {done > 0 && !anyRunning && (
           <button
             onClick={() => clearCompleted()}

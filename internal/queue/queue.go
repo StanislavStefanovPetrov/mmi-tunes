@@ -287,6 +287,20 @@ func (q *Queue) List() []Job {
 	return out
 }
 
+// ClearAll cancels every running job and removes every job from the queue.
+// Returns the number of jobs removed. Settings/history are left untouched —
+// this is a "wipe the visible list" action, not a factory reset.
+func (q *Queue) ClearAll() int {
+	q.mu.Lock()
+	ids := make([]string, len(q.order))
+	copy(ids, q.order)
+	q.mu.Unlock()
+	for _, id := range ids {
+		q.Remove(id)
+	}
+	return len(ids)
+}
+
 // ClearCompleted removes every Done/Cancelled job. Returns count removed.
 func (q *Queue) ClearCompleted() int {
 	q.mu.Lock()

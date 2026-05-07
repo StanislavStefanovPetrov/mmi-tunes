@@ -259,6 +259,10 @@ func (a *App) ListJobs() []queue.Job { return a.queue.List() }
 // ClearCompleted removes all done/cancelled jobs from the visible list.
 func (a *App) ClearCompleted() int { return a.queue.ClearCompleted() }
 
+// ClearAll cancels every running job and clears the entire visible list.
+// Settings and download history are not affected.
+func (a *App) ClearAll() int { return a.queue.ClearAll() }
+
 // StartAll queues every queued/error/cancelled job for execution.
 func (a *App) StartAll() int { return a.queue.StartAll() }
 
