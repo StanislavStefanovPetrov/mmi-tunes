@@ -20,73 +20,89 @@ const (
 	StatusCancelled Status = "cancelled"
 )
 
-// Job is one URL waiting to be (or being / having been) processed.
-// Mutated only under its own lock; the queue holds a pointer.
+// Job is the wire/persistence representation of a single URL → MP3 job.
+// Pure data, no mutex — safe to copy, marshal, ship over Wails events,
+// or write to jobs.json. The live, mutating instance lives inside the
+// queue as *jobState; Snapshot() converts state → Job.
 type Job struct {
-	mu sync.RWMutex
+	ID         string               `json:"id"`
+	URL        string               `json:"url"`
+	VideoID    string               `json:"video_id,omitempty"`
+	Title      string               `json:"title,omitempty"`
+	Status     Status               `json:"status"`
+	Progress   downloader.Progress  `json:"progress"`
+	Error      string               `json:"error,omitempty"`
+	ErrorCode  downloader.ErrorCode `json:"error_code,omitempty"`
+	OutputPath string               `json:"output_path,omitempty"`
+	AddedAt    time.Time            `json:"added_at"`
+	StartedAt  *time.Time           `json:"started_at,omitempty"`
+	FinishedAt *time.Time           `json:"finished_at,omitempty"`
+}
 
-	ID         string                 `json:"id"`
-	URL        string                 `json:"url"`
-	VideoID    string                 `json:"video_id,omitempty"`
-	Title      string                 `json:"title,omitempty"`
-	Status     Status                 `json:"status"`
-	Progress   downloader.Progress    `json:"progress"`
-	Error      string                 `json:"error,omitempty"`
-	ErrorCode  downloader.ErrorCode   `json:"error_code,omitempty"`
-	OutputPath string                 `json:"output_path,omitempty"`
-	AddedAt    time.Time              `json:"added_at"`
-	StartedAt  *time.Time             `json:"started_at,omitempty"`
-	FinishedAt *time.Time             `json:"finished_at,omitempty"`
-
+// jobState wraps a Job with the mutex and cancel func used by the queue
+// internally. It is never returned by value and never marshaled.
+type jobState struct {
+	mu     sync.RWMutex
+	data   Job
 	cancel func()
 }
 
-// Snapshot returns a copy safe to ship over the Wails event bus or persist.
-func (j *Job) Snapshot() Job {
-	j.mu.RLock()
-	defer j.mu.RUnlock()
-	return Job{
-		ID: j.ID, URL: j.URL, VideoID: j.VideoID, Title: j.Title,
-		Status: j.Status, Progress: j.Progress, Error: j.Error,
-		ErrorCode: j.ErrorCode, OutputPath: j.OutputPath,
-		AddedAt: j.AddedAt, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
-	}
+func newJobState(j Job) *jobState { return &jobState{data: j} }
+
+// snapshot returns a value copy of the data fields, safe to ship over
+// the wire or persist. Does not include the mutex or cancel func.
+func (s *jobState) snapshot() Job {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data
 }
 
-func (j *Job) setStatus(s Status) {
-	j.mu.Lock()
-	j.Status = s
+func (s *jobState) setStatus(st Status) {
+	s.mu.Lock()
+	s.data.Status = st
 	now := time.Now()
-	switch s {
+	switch st {
 	case StatusRunning:
-		if j.StartedAt == nil {
-			j.StartedAt = &now
+		if s.data.StartedAt == nil {
+			s.data.StartedAt = &now
 		}
 	case StatusDone, StatusError, StatusCancelled:
-		j.FinishedAt = &now
+		s.data.FinishedAt = &now
 	}
-	j.mu.Unlock()
+	s.mu.Unlock()
 }
 
-func (j *Job) setProgress(p downloader.Progress) {
-	j.mu.Lock()
-	j.Progress = p
-	j.mu.Unlock()
+func (s *jobState) setProgress(p downloader.Progress) {
+	s.mu.Lock()
+	s.data.Progress = p
+	s.mu.Unlock()
 }
 
-func (j *Job) setError(code downloader.ErrorCode, msg string) {
-	j.mu.Lock()
-	j.ErrorCode = code
-	j.Error = msg
-	j.mu.Unlock()
+func (s *jobState) setError(code downloader.ErrorCode, msg string) {
+	s.mu.Lock()
+	s.data.ErrorCode = code
+	s.data.Error = msg
+	s.mu.Unlock()
 }
 
-func (j *Job) setResult(videoID, title, output string) {
-	j.mu.Lock()
-	j.VideoID = videoID
+func (s *jobState) setResult(videoID, title, output string) {
+	s.mu.Lock()
+	s.data.VideoID = videoID
 	if title != "" {
-		j.Title = title
+		s.data.Title = title
 	}
-	j.OutputPath = output
-	j.mu.Unlock()
+	s.data.OutputPath = output
+	s.mu.Unlock()
+}
+
+func (s *jobState) status() Status {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.Status
+}
+
+func (s *jobState) addedAt() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.AddedAt
 }

@@ -40,8 +40,8 @@ type Downloader func(ctx context.Context, url string, settings downloader.Settin
 // Jobs. All public methods are safe for concurrent use.
 type Queue struct {
 	mu          sync.Mutex
-	jobs        map[string]*Job // by ID
-	order       []string        // FIFO display order
+	jobs        map[string]*jobState // by ID
+	order       []string             // FIFO display order
 	concurrency int
 
 	work chan string // job IDs ready to run
@@ -63,7 +63,7 @@ func New(concurrency int, dl Downloader, settings func() downloader.Settings) *Q
 		concurrency = 1
 	}
 	q := &Queue{
-		jobs:        make(map[string]*Job),
+		jobs:        make(map[string]*jobState),
 		concurrency: concurrency,
 		work:        make(chan string, 1024),
 		stop:        make(chan struct{}),
@@ -114,17 +114,19 @@ func (q *Queue) eventCloser() {
 // Add inserts a new job in StatusQueued without starting it. Returns the
 // created Job snapshot. URL must already be canonicalized by the caller.
 func (q *Queue) Add(url string) Job {
-	q.mu.Lock()
 	id := newJobID()
-	j := &Job{
+	js := newJobState(Job{
 		ID: id, URL: url, Status: StatusQueued, AddedAt: time.Now(),
-	}
-	q.jobs[id] = j
+	})
+
+	q.mu.Lock()
+	q.jobs[id] = js
 	q.order = append(q.order, id)
 	q.mu.Unlock()
 
-	q.emit(Event{Kind: EventAdded, Job: j.Snapshot()})
-	return j.Snapshot()
+	snap := js.snapshot()
+	q.emit(Event{Kind: EventAdded, Job: snap})
+	return snap
 }
 
 // AddCompleted inserts a job that's already finished — used when restoring
@@ -132,20 +134,14 @@ func (q *Queue) Add(url string) Job {
 func (q *Queue) AddCompleted(j Job) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	jp := &Job{
-		ID: j.ID, URL: j.URL, VideoID: j.VideoID, Title: j.Title,
-		Status: j.Status, Progress: j.Progress, Error: j.Error,
-		ErrorCode: j.ErrorCode, OutputPath: j.OutputPath,
-		AddedAt: j.AddedAt, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
-	}
-	q.jobs[j.ID] = jp
+	q.jobs[j.ID] = newJobState(j)
 	q.order = append(q.order, j.ID)
 }
 
 // Remove deletes a job. Cancels first if it's still running.
 func (q *Queue) Remove(id string) bool {
 	q.mu.Lock()
-	j, ok := q.jobs[id]
+	js, ok := q.jobs[id]
 	if !ok {
 		q.mu.Unlock()
 		return false
@@ -159,12 +155,12 @@ func (q *Queue) Remove(id string) bool {
 	}
 	q.mu.Unlock()
 
-	// Capture cancel under j.mu, release before invoking — the cancel func
-	// may synchronously trigger callbacks that re-take j.mu.
-	j.mu.Lock()
-	cancelFn := j.cancel
-	j.cancel = nil
-	j.mu.Unlock()
+	// Capture cancel under js.mu, release before invoking — the cancel func
+	// may synchronously trigger callbacks that re-take js.mu.
+	js.mu.Lock()
+	cancelFn := js.cancel
+	js.cancel = nil
+	js.mu.Unlock()
 	if cancelFn != nil {
 		cancelFn()
 	}
@@ -177,17 +173,15 @@ func (q *Queue) StartAll() int {
 	q.mu.Lock()
 	ids := make([]string, 0, len(q.order))
 	for _, id := range q.order {
-		j := q.jobs[id]
-		if j == nil {
+		js := q.jobs[id]
+		if js == nil {
 			continue
 		}
-		j.mu.RLock()
-		s := j.Status
-		j.mu.RUnlock()
+		s := js.status()
 		if s == StatusQueued || s == StatusError || s == StatusCancelled {
 			if s != StatusQueued {
-				j.setStatus(StatusQueued)
-				q.emit(Event{Kind: EventStatus, Job: j.Snapshot()})
+				js.setStatus(StatusQueued)
+				q.emit(Event{Kind: EventStatus, Job: js.snapshot()})
 			}
 			ids = append(ids, id)
 		}
@@ -206,33 +200,33 @@ func (q *Queue) StartAll() int {
 
 // Cancel a single in-flight job. Captures the cancel func under lock then
 // invokes it after releasing the lock — the downloader's progress callback
-// also takes j.mu, so calling cancel() while holding it would deadlock.
+// also takes js.mu, so calling cancel() while holding it would deadlock.
 func (q *Queue) Cancel(id string) bool {
 	q.mu.Lock()
-	j, ok := q.jobs[id]
+	js, ok := q.jobs[id]
 	q.mu.Unlock()
 	if !ok {
 		return false
 	}
 
-	j.mu.Lock()
-	cancelFn := j.cancel
+	js.mu.Lock()
+	cancelFn := js.cancel
 	if cancelFn != nil {
 		// Running: invoke cancel after unlocking.
-		j.cancel = nil
-		j.mu.Unlock()
+		js.cancel = nil
+		js.mu.Unlock()
 		cancelFn()
 		return true
 	}
-	if j.Status == StatusQueued {
-		j.Status = StatusCancelled
+	if js.data.Status == StatusQueued {
+		js.data.Status = StatusCancelled
 		now := time.Now()
-		j.FinishedAt = &now
-		j.mu.Unlock()
-		q.emit(Event{Kind: EventStatus, Job: j.Snapshot()})
+		js.data.FinishedAt = &now
+		js.mu.Unlock()
+		q.emit(Event{Kind: EventStatus, Job: js.snapshot()})
 		return true
 	}
-	j.mu.Unlock()
+	js.mu.Unlock()
 	return false
 }
 
@@ -259,8 +253,8 @@ func (q *Queue) List() []Job {
 	defer q.mu.Unlock()
 	out := make([]Job, 0, len(q.order))
 	for _, id := range q.order {
-		if j, ok := q.jobs[id]; ok {
-			out = append(out, j.Snapshot())
+		if js, ok := q.jobs[id]; ok {
+			out = append(out, js.snapshot())
 		}
 	}
 	return out
@@ -272,14 +266,12 @@ func (q *Queue) ClearCompleted() int {
 	keep := make([]string, 0, len(q.order))
 	removed := []string{}
 	for _, id := range q.order {
-		j := q.jobs[id]
-		if j == nil {
+		js := q.jobs[id]
+		if js == nil {
 			// Drift between order and jobs map — skip ghosts.
 			continue
 		}
-		j.mu.RLock()
-		s := j.Status
-		j.mu.RUnlock()
+		s := js.status()
 		if s == StatusDone || s == StatusCancelled {
 			delete(q.jobs, id)
 			removed = append(removed, id)
@@ -311,7 +303,7 @@ func (q *Queue) Sort() {
 		if ji == nil || jk == nil {
 			return false
 		}
-		return ji.AddedAt.Before(jk.AddedAt)
+		return ji.addedAt().Before(jk.addedAt())
 	})
 }
 
@@ -336,12 +328,12 @@ func (q *Queue) runJobSafe(id string) {
 		if r := recover(); r != nil {
 			log.Printf("queue: worker panic on job %s: %v\n%s", id, r, debug.Stack())
 			q.mu.Lock()
-			j := q.jobs[id]
+			js := q.jobs[id]
 			q.mu.Unlock()
-			if j != nil {
-				j.setError(downloader.ErrUnknown, fmt.Sprintf("internal panic: %v", r))
-				j.setStatus(StatusError)
-				q.emit(Event{Kind: EventError, Job: j.Snapshot()})
+			if js != nil {
+				js.setError(downloader.ErrUnknown, fmt.Sprintf("internal panic: %v", r))
+				js.setStatus(StatusError)
+				q.emit(Event{Kind: EventError, Job: js.snapshot()})
 			}
 		}
 	}()
@@ -350,62 +342,59 @@ func (q *Queue) runJobSafe(id string) {
 
 func (q *Queue) runJob(id string) {
 	q.mu.Lock()
-	j, ok := q.jobs[id]
+	js, ok := q.jobs[id]
 	q.mu.Unlock()
 	if !ok {
 		return
 	}
 
 	// Skip if cancelled while sitting in the queue.
-	j.mu.RLock()
-	cancelledEarly := j.Status == StatusCancelled
-	j.mu.RUnlock()
-	if cancelledEarly {
+	if js.status() == StatusCancelled {
 		return
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	j.mu.Lock()
-	j.cancel = cancel
-	j.mu.Unlock()
+	js.mu.Lock()
+	js.cancel = cancel
+	js.mu.Unlock()
 
 	// Defer cancel-cleanup so a panic inside the downloader (caught by
-	// runJobSafe's recover) still clears j.cancel. Without this a stale
+	// runJobSafe's recover) still clears js.cancel. Without this a stale
 	// CancelFunc would linger and Cancel() would return success on a
 	// dead job.
 	defer func() {
-		j.mu.Lock()
-		j.cancel = nil
-		j.mu.Unlock()
+		js.mu.Lock()
+		js.cancel = nil
+		js.mu.Unlock()
 	}()
 
-	j.setStatus(StatusRunning)
-	q.emit(Event{Kind: EventStatus, Job: j.Snapshot()})
+	js.setStatus(StatusRunning)
+	q.emit(Event{Kind: EventStatus, Job: js.snapshot()})
 
-	res, err := q.downloader(ctx, j.URL, q.settings(), func(p downloader.Progress) {
-		j.setProgress(p)
-		q.emit(Event{Kind: EventProgress, Job: j.Snapshot()})
+	res, err := q.downloader(ctx, js.data.URL, q.settings(), func(p downloader.Progress) {
+		js.setProgress(p)
+		q.emit(Event{Kind: EventProgress, Job: js.snapshot()})
 	})
 
 	if err != nil {
 		var dlErr *downloader.Error
 		if errors.As(err, &dlErr) && dlErr.Code == downloader.ErrCancelled {
-			j.setStatus(StatusCancelled)
-			q.emit(Event{Kind: EventStatus, Job: j.Snapshot()})
+			js.setStatus(StatusCancelled)
+			q.emit(Event{Kind: EventStatus, Job: js.snapshot()})
 			return
 		}
 		if errors.As(err, &dlErr) {
-			j.setError(dlErr.Code, dlErr.Message)
+			js.setError(dlErr.Code, dlErr.Message)
 		} else {
-			j.setError(downloader.ErrUnknown, err.Error())
+			js.setError(downloader.ErrUnknown, err.Error())
 		}
-		j.setStatus(StatusError)
-		q.emit(Event{Kind: EventError, Job: j.Snapshot()})
+		js.setStatus(StatusError)
+		q.emit(Event{Kind: EventError, Job: js.snapshot()})
 		return
 	}
-	j.setResult(res.VideoID, res.Title, res.OutputPath)
-	j.setStatus(StatusDone)
-	q.emit(Event{Kind: EventDone, Job: j.Snapshot()})
+	js.setResult(res.VideoID, res.Title, res.OutputPath)
+	js.setStatus(StatusDone)
+	q.emit(Event{Kind: EventDone, Job: js.snapshot()})
 }
 
 // emit pushes an event without blocking. If Stop has been called or the
