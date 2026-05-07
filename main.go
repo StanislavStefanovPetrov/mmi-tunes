@@ -7,12 +7,19 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+
+	"github.com/StanislavStefanovPetrov/mmi-tunes/internal/tools"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
+	// macOS .app bundles launched from Finder inherit a minimal PATH
+	// that excludes /opt/homebrew/bin etc. Augment so child processes
+	// (yt-dlp, ffmpeg) are findable regardless of how the app started.
+	tools.AugmentPATH()
+
 	app := NewApp()
 
 	err := wails.Run(&options.App{

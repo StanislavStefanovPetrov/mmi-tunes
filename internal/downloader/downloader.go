@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/StanislavStefanovPetrov/mmi-tunes/internal/postprocess"
+	"github.com/StanislavStefanovPetrov/mmi-tunes/internal/tools"
 	urlpkg "github.com/StanislavStefanovPetrov/mmi-tunes/internal/url"
 )
 
@@ -107,7 +108,18 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 
 	args := buildYtDlpArgs(canonical, outputTemplate, s)
 
-	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
+	ytdlpPath, err := tools.Locate("yt-dlp")
+	if err != nil {
+		return nil, &Error{Code: ErrUnknown, Message: "yt-dlp not found: " + err.Error()}
+	}
+	// When the bundled yt-dlp invokes ffmpeg we want it to find our
+	// bundled ffmpeg, not whatever (if anything) is on PATH. Pass the
+	// directory via --ffmpeg-location so yt-dlp picks it up explicitly.
+	if ffmpegPath, err := tools.Locate("ffmpeg"); err == nil {
+		args = append([]string{"--ffmpeg-location", filepath.Dir(ffmpegPath)}, args...)
+	}
+
+	cmd := exec.CommandContext(ctx, ytdlpPath, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, &Error{Code: ErrUnknown, Message: err.Error()}
@@ -161,7 +173,11 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 // fetchMetadata calls yt-dlp with --skip-download --print-json to grab
 // the title/uploader/duration. Used for filename construction and UI.
 func fetchMetadata(ctx context.Context, url string) (*Metadata, error) {
-	cmd := exec.CommandContext(ctx, "yt-dlp",
+	ytdlpPath, err := tools.Locate("yt-dlp")
+	if err != nil {
+		return nil, &Error{Code: ErrUnknown, Message: "yt-dlp not found: " + err.Error()}
+	}
+	cmd := exec.CommandContext(ctx, ytdlpPath,
 		"--skip-download",
 		"--print-json",
 		"--no-warnings",

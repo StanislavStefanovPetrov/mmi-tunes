@@ -43,3 +43,5 @@ frontend/vite.config.js
 
 # OS
 .DS_Store
+tools/
+dist/

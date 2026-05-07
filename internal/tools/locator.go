@@ -24,8 +24,13 @@ type AllStatus struct {
 	FFmpeg Status `json:"ffmpeg"`
 }
 
-// Locate looks up a tool's absolute path on PATH.
+// Locate returns the absolute path to a tool, preferring a binary bundled
+// inside the .app's Resources/ directory over whatever is on PATH.
+// Bundled binaries make the app self-contained — no `brew install` needed.
 func Locate(name string) (string, error) {
+	if bundled := BundleResourcePath(name); bundled != "" {
+		return bundled, nil
+	}
 	p, err := exec.LookPath(name)
 	if err != nil {
 		return "", err

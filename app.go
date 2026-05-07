@@ -364,9 +364,19 @@ func (a *App) guardPath(p string) error {
 // CheckTools probes yt-dlp and ffmpeg.
 func (a *App) CheckTools() tools.AllStatus { return tools.CheckAll() }
 
-// UpdateYtDlp runs `yt-dlp -U`. Returns combined stdout+stderr.
+// UpdateYtDlp runs `yt-dlp -U` against the active yt-dlp binary. If the
+// active binary is the one bundled inside the .app, self-update would
+// either fail (read-only) or invalidate code signing — return a clear
+// message instead. To upgrade bundled tools, ship a new app version.
 func (a *App) UpdateYtDlp() (string, error) {
-	out, err := exec.CommandContext(a.ctx, "yt-dlp", "-U").CombinedOutput()
+	path, err := tools.Locate("yt-dlp")
+	if err != nil {
+		return "", err
+	}
+	if strings.Contains(path, ".app/Contents/Resources/") {
+		return "yt-dlp is bundled inside this version of MMI Tunes. To upgrade, install a newer release of the app.", nil
+	}
+	out, err := exec.CommandContext(a.ctx, path, "-U").CombinedOutput()
 	if err != nil {
 		return strings.TrimSpace(string(out)), err
 	}
