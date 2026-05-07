@@ -49,12 +49,13 @@ Tested on **Audi MMI 3G+** (Audi Q7 4LB).
 
 ## Install
 
-```bash
-brew install yt-dlp ffmpeg
-cp -R "build/bin/MMI Tunes.app" /Applications/
-```
+1. Grab the latest **`MMI-Tunes-X.Y.Z.pkg`** from [Releases](https://github.com/StanislavStefanovPetrov/mmi-tunes/releases).
+2. Double-click the `.pkg` → Apple installer wizard → **Install** → enter your password.
+3. Launch from Spotlight (`⌘+Space → "MMI Tunes"`).
 
-First launch: right-click the app in Finder → **Open** → confirm. macOS shows a Gatekeeper warning once because the build is unsigned (no Apple Developer account); after that it launches normally from Spotlight, Dock, or `open -a "MMI Tunes"`.
+`yt-dlp`, `ffmpeg`, and `ffprobe` ship inside the bundle — **no `brew install` needed**, no Homebrew assumed. Works on a fresh Mac.
+
+First launch: macOS will warn that the developer can't be verified (the build is unsigned — no Apple Developer account). Right-click the app in **/Applications** → **Open** → confirm. After that it launches normally.
 
 ## Usage
 
@@ -84,8 +85,8 @@ First launch: right-click the app in Finder → **Open** → confirm. macOS show
 │  ├─ queue.Queue   worker pool, per-job context.CancelFunc    │
 │  ├─ settings.Store / history.Store / queue.Save+Load         │
 │  └─ downloader.Download                                      │
-│      └─ yt-dlp --extract-audio --audio-format mp3 …          │
-│          └─ ffmpeg (invoked by yt-dlp)                       │
+│      └─ yt-dlp (bundled in Resources/)                       │
+│          └─ ffmpeg + ffprobe (bundled, invoked by yt-dlp)    │
 │      └─ postprocess.ResizeCoverArtInMP3 (Go, bogem/id3v2)    │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -103,26 +104,40 @@ Persistence:
 
 - **Backend** — Go 1.23, [Wails v2](https://wails.io), [`bogem/id3v2`](https://github.com/bogem/id3v2), `golang.org/x/image/draw`.
 - **Frontend** — React 18, TypeScript, Vite, Tailwind CSS, Zustand.
-- **External CLIs** — [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) and [`ffmpeg`](https://ffmpeg.org/), installed via `brew`. (Future: bundled inside the `.app` so no `brew install` is needed.)
+- **Bundled CLIs** — [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (universal binary from upstream releases) and static [`ffmpeg`](https://ffmpeg.org/) + `ffprobe` from [evermeet.cx](https://evermeet.cx/ffmpeg/). All three live in `MMI Tunes.app/Contents/Resources/`.
 
 ## Development
 
 ```bash
 # Prereqs (one-time)
-brew install yt-dlp ffmpeg
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
+brew install yt-dlp ffmpeg          # only for `wails dev` and `go test`;
+                                    # the .pkg build downloads bundled
+                                    # binaries on its own (see below).
 
 # Live-reload dev (Go + React both hot-reload)
 wails dev
 
 # Run tests (race detector on)
 go test -race ./...
-
-# Production build → build/bin/MMI Tunes.app
-wails build -platform darwin/arm64
 ```
 
-The smoke-test CLI is useful when iterating on the downloader engine without re-launching the GUI:
+### Production build (.pkg installer)
+
+```bash
+./scripts/download-tools.sh         # pulls yt-dlp + static ffmpeg/ffprobe
+                                    # into ./tools/  (gitignored)
+./scripts/build-pkg.sh 1.0.0        # → dist/MMI-Tunes-1.0.0.pkg
+```
+
+`build-pkg.sh` runs `wails build -platform darwin/arm64`, copies the
+three CLI binaries into `MMI Tunes.app/Contents/Resources/`, ad-hoc
+re-signs the app (since modifying Resources/ invalidates the signature),
+and wraps the result in a `.pkg` via `pkgbuild`.
+
+### Smoke-test CLI
+
+Useful for iterating on the downloader engine without re-launching the GUI:
 
 ```bash
 go run ./cmd/cli "https://www.youtube.com/watch?v=…" /tmp/mmi-out
@@ -136,18 +151,34 @@ Done:
 - [x] Concurrent worker pool with cancel + retry
 - [x] Settings persistence + history dedup
 - [x] React UI with progress bars, settings drawer, dedup prompt
+- [x] Per-row download / retry / cancel + Clear all
 - [x] yt-dlp stderr categorisation (geo, age, Premium, bot-check, network)
 - [x] App icon, full `-race` test suite
+- [x] Bundled `yt-dlp` + `ffmpeg` (no `brew install` for end users)
+- [x] `.pkg` installer + GitHub Releases
 
 Maybe next:
 
-- [ ] Bundled `yt-dlp` + `ffmpeg` (no `brew install`)
 - [ ] Auto-update yt-dlp from inside the app
 - [ ] Playlist URLs (one URL → many tracks)
 - [ ] M3U playlist file generation
 - [ ] Drag-and-drop URLs from a browser
 - [ ] macOS notifications when batches finish
 - [ ] Apple Developer signed + notarized release (no Gatekeeper warning)
+
+## Uninstall
+
+macOS apps are self-contained — there is no separate uninstaller:
+
+```bash
+rm -rf "/Applications/MMI Tunes.app"
+
+# Optional: also forget settings, history, and the saved job list.
+rm -rf "$HOME/Library/Application Support/MMI Tunes"
+
+# Optional: also delete the downloaded MP3s.
+rm -rf "$HOME/Music/MMI Tunes"
+```
 
 ## License
 
