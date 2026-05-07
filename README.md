@@ -12,6 +12,10 @@ A macOS app that downloads YouTube audio and converts it to MP3s that fully comp
 
 ## What it does
 
+<p align="center">
+  <img src="docs/screenshots/main.png" width="640" alt="MMI Tunes main window with five jobs in different states">
+</p>
+
 - Paste a YouTube URL → click → MP3 file in `~/Music/MMI Tunes/`.
 - Bitrate, sample rate, channels, and cover-art size are automatically tuned to Audi MMI's spec sheet.
 - Multiple URLs download in parallel (configurable, default 3).
@@ -19,6 +23,10 @@ A macOS app that downloads YouTube audio and converts it to MP3s that fully comp
 - "Already downloaded?" check stops you from grabbing the same video twice — and shows you where the existing file is so you can drop it on your SD card.
 - Automatic Cyrillic → Latin transliteration in filenames so they survive on FAT32 SD cards.
 - Survives bad URLs, geo-blocked videos, age-gated content, network drops, and YouTube's bot checks with friendly error messages.
+
+<p align="center">
+  <img src="docs/screenshots/dedup.png" width="640" alt="Dedup prompt — already-downloaded URL shows path with Reveal in Finder button">
+</p>
 
 ## Audi MMI compliance, automatic
 
@@ -56,6 +64,10 @@ First launch: right-click the app in Finder → **Open** → confirm. macOS show
 4. Drag onto an SD card formatted as FAT32, slide it into the Audi, drive.
 
 ### Settings (⚙ icon, top-right)
+
+<p align="center">
+  <img src="docs/screenshots/settings.png" width="640" alt="Settings drawer with Audi MMI Preset, audio quality, cover-art and behaviour options">
+</p>
 
 - **Download folder** — defaults to `~/Music/MMI Tunes`.
 - **Audi MMI Preset** — one click sets bitrate to 320, sample rate to 48000, stereo, cover ≤ 800 px.
