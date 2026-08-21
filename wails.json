@@ -14,6 +14,7 @@
     "companyName": "Stanislav Petrov",
     "productName": "MMI Tunes",
     "productIdentifier": "com.stanislavpetrov.mmi-tunes",
-    "comments": "macOS app for downloading YouTube audio as Audi MMI compatible MP3"
+    "comments": "macOS app for downloading YouTube audio as Audi MMI compatible MP3",
+    "copyright": "\u00a9 2026 Stanislav Petrov. MIT licensed."
   }
 }

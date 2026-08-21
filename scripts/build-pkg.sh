@@ -31,6 +31,11 @@ echo "==> Building Wails app (darwin/arm64)…"
 export PATH="$PATH:$(go env GOPATH)/bin"
 wails build -platform darwin/arm64 -clean
 
+echo "==> Stamping version ${VERSION} into Info.plist…"
+PLIST="${APP_PATH}/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${PLIST}"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" "${PLIST}"
+
 echo "==> Bundling tools into ${APP_PATH}/Contents/Resources/…"
 RES="${APP_PATH}/Contents/Resources"
 cp tools/yt-dlp "${RES}/yt-dlp"
