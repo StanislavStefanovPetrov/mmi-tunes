@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useStore } from './store/jobs'
 import { AddUrlBar } from './components/AddUrlBar'
 import { UrlList } from './components/UrlList'
+import { Tabs, type TabKey } from './components/Tabs'
 import { SettingsDrawer } from './components/SettingsDrawer'
 import { DiagnosticsBanner } from './components/DiagnosticsBanner'
 import { DownloadButton } from './components/DownloadButton'
@@ -9,6 +10,7 @@ import { DownloadButton } from './components/DownloadButton'
 function App() {
   const init = useStore((s) => s.init)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [tab, setTab] = useState<TabKey>('all')
 
   useEffect(() => {
     init()
@@ -36,7 +38,8 @@ function App() {
       <main className="flex flex-1 flex-col gap-3 overflow-hidden p-4">
         <DiagnosticsBanner />
         <AddUrlBar />
-        <UrlList />
+        <Tabs active={tab} onChange={setTab} />
+        <UrlList tab={tab} />
       </main>
 
       <DownloadButton />
