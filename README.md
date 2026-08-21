@@ -66,6 +66,11 @@ Tested on **Audi MMI 3G+** (Audi Q7 4LB).
    xattr -d com.apple.quarantine ~/Downloads/MMI-Tunes-X.Y.Z.pkg
    ```
 
+   Note that the flag is an extended attribute on the *file*, so it survives
+   being moved or renamed — copying the download into another folder does not
+   clear it, and Finder will simply append " copy" to the name and carry the
+   flag along. Approve the file where it is, or strip the flag as above.
+
 3. Apple installer wizard → **Install** → enter your password.
 
 4. Launch from Spotlight (`⌘+Space → "MMI Tunes"`).
