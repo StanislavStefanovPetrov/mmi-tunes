@@ -6,7 +6,11 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/bogem/id3v2/v2"
 )
 
 // makeJPEG returns a JPEG-encoded test image of the given size with a
@@ -163,5 +167,123 @@ func TestResizeJPEG_ChangedFlag(t *testing.T) {
 	}
 	if !changed {
 		t.Error("expected changed=true for PNG (re-encoded to JPEG)")
+	}
+}
+
+// writeTaggedMP3 builds a minimal ID3v2.3-tagged file whose TXXX frames are
+// encoded the way yt-dlp writes them: encoding 0x01, a little-endian BOM,
+// UTF-16LE text. We hand-assemble the bytes rather than use bogem, because
+// bogem's writer is the thing under test — letting it produce the fixture
+// would hide the very defect we are checking for.
+func writeTaggedMP3(t *testing.T, path string, cover []byte, udt map[string]string) {
+	t.Helper()
+
+	utf16le := func(s string) []byte {
+		out := []byte{0xff, 0xfe}
+		for _, r := range s {
+			out = append(out, byte(r), byte(r>>8))
+		}
+		return out
+	}
+	frame := func(id string, body []byte) []byte {
+		out := []byte(id)
+		n := len(body)
+		out = append(out, byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+		out = append(out, 0, 0)
+		return append(out, body...)
+	}
+
+	var frames []byte
+	for desc, val := range udt {
+		body := []byte{0x01}
+		body = append(body, utf16le(desc)...)
+		body = append(body, 0x00, 0x00) // UTF-16 terminator
+		body = append(body, utf16le(val)...)
+		frames = append(frames, frame("TXXX", body)...)
+	}
+	apic := []byte{0x00}
+	apic = append(apic, []byte("image/jpeg")...)
+	apic = append(apic, 0x00, 0x03, 0x00) // type=front cover, empty description
+	apic = append(apic, cover...)
+	frames = append(frames, frame("APIC", apic)...)
+
+	sz := len(frames)
+	hdr := append([]byte("ID3"), 0x03, 0x00, 0x00)
+	hdr = append(hdr, byte(sz>>21)&0x7f, byte(sz>>14)&0x7f, byte(sz>>7)&0x7f, byte(sz)&0x7f)
+
+	// A byte of "audio" so the file is not just a tag.
+	out := append(append(hdr, frames...), 0xff, 0xfb, 0x00, 0x00)
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// bogem/id3v2 v2.1.4 corrupts UTF-16 TXXX frames whenever it rewrites a tag,
+// misaligning them by one NUL byte and truncating the last character. We only
+// ever want the cover resized, so the two frames yt-dlp fills with the
+// YouTube blurb are dropped instead of being written back mangled.
+func TestResizeCoverArtInMP3_DropsFramesBogemWouldCorrupt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.mp3")
+	writeTaggedMP3(t, path, makeJPEG(t, 1280, 720), map[string]string{
+		"description": "Кирилица, за да е UTF-16",
+		"synopsis":    "също кирилица",
+	})
+
+	if err := ResizeCoverArtInMP3(path, 800); err != nil {
+		t.Fatalf("resize: %v", err)
+	}
+
+	tag, err := id3v2.Open(path, id3v2.Options{Parse: true})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer tag.Close()
+
+	for _, f := range tag.GetFrames(tag.CommonID("User defined text information frame")) {
+		if u, ok := f.(id3v2.UserDefinedTextFrame); ok {
+			if u.Description == "description" || u.Description == "synopsis" {
+				t.Errorf("frame %q survived; bogem will have corrupted it", u.Description)
+			}
+		}
+	}
+
+	// The point of the function still has to work.
+	pics := tag.GetFrames(tag.CommonID("Attached picture"))
+	if len(pics) != 1 {
+		t.Fatalf("got %d APIC frames, want 1", len(pics))
+	}
+	w, h := decodeBounds(t, pics[0].(id3v2.PictureFrame).Picture)
+	if w > 800 || h > 800 {
+		t.Errorf("cover is %dx%d, want both sides <= 800", w, h)
+	}
+}
+
+// Only the two known-bad descriptors go. yt-dlp also writes ASCII-encoded
+// TXXX frames, which bogem round-trips correctly and which must survive.
+func TestResizeCoverArtInMP3_KeepsOtherUserTextFrames(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.mp3")
+	writeTaggedMP3(t, path, makeJPEG(t, 1280, 720), map[string]string{
+		"description": "drop me",
+		"purl":        "https://www.youtube.com/watch?v=abc",
+	})
+
+	if err := ResizeCoverArtInMP3(path, 800); err != nil {
+		t.Fatalf("resize: %v", err)
+	}
+
+	tag, err := id3v2.Open(path, id3v2.Options{Parse: true})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer tag.Close()
+
+	var got []string
+	for _, f := range tag.GetFrames(tag.CommonID("User defined text information frame")) {
+		if u, ok := f.(id3v2.UserDefinedTextFrame); ok {
+			got = append(got, u.Description)
+		}
+	}
+	if len(got) != 1 || got[0] != "purl" {
+		t.Errorf("remaining TXXX descriptors = %v, want exactly [purl]", got)
 	}
 }

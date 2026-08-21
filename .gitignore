@@ -48,3 +48,6 @@ frontend/vite.config.js
 # Anchor with leading slash so internal/tools/ is NOT matched.
 /tools/
 /dist/
+
+# Engineering notes — kept locally, deliberately not published.
+/sessions/

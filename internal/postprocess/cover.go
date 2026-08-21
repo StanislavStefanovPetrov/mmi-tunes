@@ -113,6 +113,37 @@ func ResizeCoverArtInMP3(path string, maxPx int) error {
 	for _, f := range newFrames {
 		tag.AddFrame(tag.CommonID("Attached picture"), f)
 	}
+
+	// bogem/id3v2 v2.1.4 (latest as of 2026-08) rewrites the *entire* tag on
+	// Save, and corrupts UTF-16 TXXX frames on the way out: it emits one
+	// extra NUL between the descriptor's terminator and the value's BOM,
+	// while keeping the declared frame size — so every later read is
+	// misaligned by a byte and the final character is truncated. Strict
+	// parsers reject the frame outright ("Incorrect BOM value").
+	//
+	// yt-dlp's --embed-metadata writes exactly two such frames, the YouTube
+	// blurb: "description" and "synopsis". Audi MMI never reads either, so
+	// drop them rather than ship them mangled. ASCII-encoded TXXX frames are
+	// unaffected and are preserved as-is.
+	const udtID = "User defined text information frame"
+	udt := tag.GetFrames(tag.CommonID(udtID))
+	keep := make([]id3v2.Framer, 0, len(udt))
+	dropped := false
+	for _, f := range udt {
+		t, ok := f.(id3v2.UserDefinedTextFrame)
+		if ok && (t.Description == "description" || t.Description == "synopsis") {
+			dropped = true
+			continue
+		}
+		keep = append(keep, f)
+	}
+	if dropped {
+		tag.DeleteFrames(tag.CommonID(udtID))
+		for _, f := range keep {
+			tag.AddFrame(tag.CommonID(udtID), f)
+		}
+	}
+
 	if err := tag.Save(); err != nil {
 		return fmt.Errorf("save id3v2: %w", err)
 	}
