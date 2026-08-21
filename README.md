@@ -49,13 +49,30 @@ Tested on **Audi MMI 3G+** (Audi Q7 4LB).
 
 ## Install
 
-1. Grab the latest **`MMI-Tunes-X.Y.Z.pkg`** from [Releases](https://github.com/StanislavStefanovPetrov/mmi-tunes/releases).
-2. Double-click the `.pkg` → Apple installer wizard → **Install** → enter your password.
-3. Launch from Spotlight (`⌘+Space → "MMI Tunes"`).
+1. Download the latest **`MMI-Tunes-X.Y.Z.pkg`** from [Releases](https://github.com/StanislavStefanovPetrov/mmi-tunes/releases).
+
+2. **Expect macOS to block it the first time.** These builds are unsigned — there is no Apple Developer account behind the project — so downloading tags the file with a quarantine flag and Gatekeeper refuses to open the installer:
+
+   > **"MMI-Tunes-X.Y.Z.pkg" Not Opened**
+   > Apple could not verify "MMI-Tunes-X.Y.Z.pkg" is free of malware that may harm your Mac or compromise your privacy.
+
+   Press **Done** — *not* **Move to Bin**. Then open **System Settings ▸ Privacy & Security**, scroll to the bottom, and press **Open Anyway** beside the blocked file.
+
+   On macOS 15 (Sequoia) and later this is the only route Apple supports; right-clicking the file and choosing **Open** no longer bypasses the check the way it did on older releases.
+
+   Prefer the terminal? Clearing the quarantine flag has the same effect, and then a plain double-click works:
+
+   ```bash
+   xattr -d com.apple.quarantine ~/Downloads/MMI-Tunes-X.Y.Z.pkg
+   ```
+
+3. Apple installer wizard → **Install** → enter your password.
+
+4. Launch from Spotlight (`⌘+Space → "MMI Tunes"`).
 
 `yt-dlp`, `ffmpeg`, `ffprobe`, and `qjs` ship inside the bundle — **no `brew install` needed**, no Homebrew assumed. Works on a fresh Mac.
 
-First launch: macOS will warn that the developer can't be verified (the build is unsigned — no Apple Developer account). Right-click the app in **/Applications** → **Open** → confirm. After that it launches normally.
+The app itself starts without any further warning: the installer writes it into `/Applications` as root, and the quarantine flag is not carried over to the installed bundle. The Gatekeeper prompt in step 2 is the only one you should see (verified on macOS 26.6).
 
 ## Usage
 
