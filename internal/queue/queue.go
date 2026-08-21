@@ -367,12 +367,13 @@ func (q *Queue) worker() {
 func (q *Queue) runJobSafe(id string) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("queue: worker panic on job %s: %v\n%s", id, r, debug.Stack())
+			stack := debug.Stack()
+			log.Printf("queue: worker panic on job %s: %v\n%s", id, r, stack)
 			q.mu.Lock()
 			js := q.jobs[id]
 			q.mu.Unlock()
 			if js != nil {
-				js.setError(downloader.ErrUnknown, fmt.Sprintf("internal panic: %v", r))
+				js.setError(downloader.ErrUnknown, fmt.Sprintf("internal panic: %v", r), string(stack))
 				js.setStatus(StatusError)
 				q.emit(Event{Kind: EventError, Job: js.snapshot()})
 			}
@@ -425,9 +426,9 @@ func (q *Queue) runJob(id string) {
 			return
 		}
 		if errors.As(err, &dlErr) {
-			js.setError(dlErr.Code, dlErr.Message)
+			js.setError(dlErr.Code, dlErr.Message, dlErr.Stderr)
 		} else {
-			js.setError(downloader.ErrUnknown, err.Error())
+			js.setError(downloader.ErrUnknown, err.Error(), "")
 		}
 		js.setStatus(StatusError)
 		q.emit(Event{Kind: EventError, Job: js.snapshot()})

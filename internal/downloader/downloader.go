@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/StanislavStefanovPetrov/mmi-tunes/internal/postprocess"
 	"github.com/StanislavStefanovPetrov/mmi-tunes/internal/tools"
@@ -34,6 +35,7 @@ type Settings struct {
 	EmbedThumbnail bool
 	ThumbnailMaxPx int  // resize embedded thumbnail to this max dimension
 	Transliterate  bool // (currently always on; reserved for future toggle)
+	Verbose        bool // pass -v to yt-dlp and tee stderr to the log file
 }
 
 // MMIDefaults returns the recommended settings for Audi MMI 3G+ output.
@@ -74,6 +76,69 @@ type Error struct {
 
 func (e *Error) Error() string { return fmt.Sprintf("%s: %s", e.Code, e.Message) }
 
+// jsRuntimeArgs returns the flags that point yt-dlp at our bundled
+// QuickJS binary, or nil if it cannot be found.
+//
+// YouTube requires solving a JavaScript "n signature" challenge before it
+// will return adaptive audio formats. yt-dlp delegates that to an external
+// JS engine; with none available it falls back to the visionos client,
+// which answers UNPLAYABLE — surfacing as "This video is not available"
+// even for perfectly public videos.
+//
+// We do not pass --no-js-runtimes first. yt-dlp prefers deno > node >
+// quickjs > bun and picks the highest-priority runtime that is both
+// enabled and available, so leaving deno enabled lets a user who has one
+// take the faster path while our bundled qjs remains the guaranteed floor.
+func jsRuntimeArgs() []string {
+	qjs, err := tools.Locate("qjs")
+	if err != nil {
+		return nil
+	}
+	return []string{"--js-runtimes", "quickjs:" + qjs}
+}
+
+// maxLogBytes caps the verbose log so a long session cannot fill the disk.
+// The file is truncated rather than rotated — it is a debugging aid, not an
+// audit trail.
+const maxLogBytes = 5 << 20 // 5 MiB
+
+// LogPath returns the verbose log location, creating its directory.
+// Also used by App.OpenLog to reveal the file in Finder.
+func LogPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(home, "Library", "Logs", "MMI Tunes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "mmi-tunes.log"), nil
+}
+
+// openVerboseLog opens the log for appending, truncating it first if it has
+// grown past maxLogBytes. Returns nil (not an error) when logging cannot be
+// set up — verbose logging is a diagnostic nicety and must never fail a
+// download.
+func openVerboseLog(url string) *os.File {
+	path, err := LogPath()
+	if err != nil {
+		log.Printf("downloader: verbose log path: %v", err)
+		return nil
+	}
+	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	if info, err := os.Stat(path); err == nil && info.Size() > maxLogBytes {
+		flags = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	}
+	f, err := os.OpenFile(path, flags, 0o644)
+	if err != nil {
+		log.Printf("downloader: open verbose log: %v", err)
+		return nil
+	}
+	fmt.Fprintf(f, "\n===== %s  %s =====\n", time.Now().Format(time.RFC3339), url)
+	return f
+}
+
 // Download runs yt-dlp end-to-end for url, streaming progress to
 // onProgress (which may be nil). Returns an error of type *Error on
 // known failure modes.
@@ -95,7 +160,7 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 	}
 
 	onProgress(Progress{Stage: StageMetadata, Message: "Fetching video metadata…"})
-	meta, err := fetchMetadata(ctx, canonical)
+	meta, err := fetchMetadata(ctx, canonical, s.Verbose)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +183,7 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 	if ffmpegPath, err := tools.Locate("ffmpeg"); err == nil {
 		args = append([]string{"--ffmpeg-location", filepath.Dir(ffmpegPath)}, args...)
 	}
+	args = append(jsRuntimeArgs(), args...)
 
 	cmd := exec.CommandContext(ctx, ytdlpPath, args...)
 	stdout, err := cmd.StdoutPipe()
@@ -126,6 +192,12 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 	}
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
+	if s.Verbose {
+		if logFile := openVerboseLog(canonical); logFile != nil {
+			defer logFile.Close()
+			cmd.Stderr = io.MultiWriter(&stderrBuf, logFile)
+		}
+	}
 
 	if err := cmd.Start(); err != nil {
 		// cmd.Wait() never runs, so close the pipe ourselves to avoid
@@ -172,20 +244,33 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 
 // fetchMetadata calls yt-dlp with --skip-download --print-json to grab
 // the title/uploader/duration. Used for filename construction and UI.
-func fetchMetadata(ctx context.Context, url string) (*Metadata, error) {
+//
+// Warnings are deliberately NOT suppressed: yt-dlp reports a missing JS
+// runtime as a warning, and swallowing it turns a diagnosable failure into
+// an opaque "This video is not available".
+func fetchMetadata(ctx context.Context, url string, verbose bool) (*Metadata, error) {
 	ytdlpPath, err := tools.Locate("yt-dlp")
 	if err != nil {
 		return nil, &Error{Code: ErrUnknown, Message: "yt-dlp not found: " + err.Error()}
 	}
-	cmd := exec.CommandContext(ctx, ytdlpPath,
+	args := append(jsRuntimeArgs(),
 		"--skip-download",
 		"--print-json",
-		"--no-warnings",
 		url,
 	)
+	if verbose {
+		args = append([]string{"-v"}, args...)
+	}
+	cmd := exec.CommandContext(ctx, ytdlpPath, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if verbose {
+		if logFile := openVerboseLog(url); logFile != nil {
+			defer logFile.Close()
+			cmd.Stderr = io.MultiWriter(&stderr, logFile)
+		}
+	}
 	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil, &Error{Code: ErrCancelled, Message: "Cancelled."}
@@ -212,6 +297,8 @@ func fetchMetadata(ctx context.Context, url string) (*Metadata, error) {
 // Sample rate and channels go through --postprocessor-args using the
 // ExtractAudio: prefix so they only apply to the audio extraction step
 // (not, say, thumbnail conversion).
+//
+// --no-warnings is intentionally absent — see fetchMetadata.
 func buildYtDlpArgs(url, outputTemplate string, s Settings) []string {
 	bitrate := clamp(s.Bitrate, 64, 320)
 	ppArgs := fmt.Sprintf("ExtractAudio:-ac %s -ar %s",
@@ -222,7 +309,6 @@ func buildYtDlpArgs(url, outputTemplate string, s Settings) []string {
 	args := []string{
 		"--newline",
 		"--no-playlist",
-		"--no-warnings",
 		"--no-colors",
 		"--extract-audio",
 		"--audio-format", "mp3",
@@ -235,6 +321,9 @@ func buildYtDlpArgs(url, outputTemplate string, s Settings) []string {
 	}
 	if s.EmbedThumbnail {
 		args = append(args, "--embed-thumbnail", "--convert-thumbnails", "jpg")
+	}
+	if s.Verbose {
+		args = append(args, "-v")
 	}
 	args = append(args, url)
 	return args

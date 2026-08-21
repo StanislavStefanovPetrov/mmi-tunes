@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download yt-dlp, ffmpeg, and ffprobe into tools/ so build-pkg.sh
+# Download yt-dlp, ffmpeg, ffprobe, and qjs into tools/ so build-pkg.sh
 # can bundle them into MMI Tunes.app. Idempotent — re-running upgrades
 # to the latest versions.
 #
@@ -7,6 +7,9 @@
 #   yt-dlp       — github.com/yt-dlp/yt-dlp (universal Mach-O)
 #   ffmpeg       — evermeet.cx (canonical static macOS build, since 2009)
 #   ffprobe      — evermeet.cx
+#   qjs          — github.com/quickjs-ng/quickjs (JS runtime yt-dlp needs to
+#                  solve YouTube's n-signature challenge; without it YouTube
+#                  returns no audio formats at all)
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -31,11 +34,17 @@ unzip -o ffprobe.zip > /dev/null
 rm ffprobe.zip
 chmod +x ffprobe
 
+echo "==> Downloading qjs (quickjs-ng, arm64)…"
+curl -sL --max-time 120 -o qjs \
+  https://github.com/quickjs-ng/quickjs/releases/latest/download/qjs-darwin-arm64
+chmod +x qjs
+
 echo
 echo "==> Versions:"
 ./yt-dlp --version
 ./ffmpeg -version | head -1
 ./ffprobe -version | head -1
+echo "qjs      $(./qjs --version)"
 echo
 echo "==> Total size:"
 du -sh "${TOOLS}"

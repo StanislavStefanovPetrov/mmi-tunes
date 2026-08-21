@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -232,4 +233,64 @@ func TestQueue_ClearCompleted(t *testing.T) {
 	if got := q.Len(); got != 0 {
 		t.Errorf("Len=%d, want 0", got)
 	}
+}
+
+// The raw yt-dlp stderr must reach the UI, not just the one-line summary.
+// Without it the user sees "This video is not available" and has no way to
+// discover the warning that names the real cause — which is what made the
+// missing-JS-runtime failure so hard to diagnose.
+func TestQueue_ErrorDetailCarriesRawStderr(t *testing.T) {
+	const stderr = "WARNING: [youtube] No supported JavaScript runtime could be found.\nERROR: [youtube] x: This video is not available"
+	dl := func(context.Context, string, downloader.Settings, func(downloader.Progress)) (*downloader.Result, error) {
+		return nil, &downloader.Error{
+			Code:    downloader.ErrJSRuntime,
+			Message: "YouTube needs a JavaScript runtime",
+			Stderr:  stderr,
+		}
+	}
+	q := newWithStub(t, 1, dl)
+	q.Add("u")
+	q.StartAll()
+
+	j := waitForError(t, q)
+	if j.ErrorDetail != stderr {
+		t.Errorf("ErrorDetail = %q, want the full stderr %q", j.ErrorDetail, stderr)
+	}
+}
+
+// Jobs are persisted to jobs.json on every change, so verbose stderr must
+// be capped or the file grows without bound. The tail is what is kept —
+// yt-dlp reports the actual failure at the end.
+func TestQueue_ErrorDetailIsCappedKeepingTail(t *testing.T) {
+	huge := strings.Repeat("x", maxErrorDetailBytes*2) + "FINAL-ERROR-LINE"
+	dl := func(context.Context, string, downloader.Settings, func(downloader.Progress)) (*downloader.Result, error) {
+		return nil, &downloader.Error{Code: downloader.ErrUnknown, Message: "boom", Stderr: huge}
+	}
+	q := newWithStub(t, 1, dl)
+	q.Add("u")
+	q.StartAll()
+
+	j := waitForError(t, q)
+	if len(j.ErrorDetail) > maxErrorDetailBytes+len("…(truncated)\n") {
+		t.Errorf("ErrorDetail is %d bytes, want it capped near %d", len(j.ErrorDetail), maxErrorDetailBytes)
+	}
+	if !strings.HasSuffix(j.ErrorDetail, "FINAL-ERROR-LINE") {
+		t.Error("cap dropped the tail; the tail is where yt-dlp reports the failure")
+	}
+	if !strings.HasPrefix(j.ErrorDetail, "…(truncated)") {
+		t.Error("truncation should be visible to the user, not silent")
+	}
+}
+
+func waitForError(t *testing.T, q *Queue) Job {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if jobs := q.List(); len(jobs) > 0 && jobs[0].Status == StatusError {
+			return jobs[0]
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("job did not enter error state, list=%+v", q.List())
+	return Job{}
 }

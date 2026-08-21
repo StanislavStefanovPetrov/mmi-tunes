@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useStore, type Job } from '../store/jobs'
 import { RevealInFinder } from '../../wailsjs/go/main/App'
 
@@ -37,6 +38,15 @@ export function UrlRow({ job }: { job: Job }) {
   const removeJob = useStore((s) => s.removeJob)
   const cancelJob = useStore((s) => s.cancelJob)
   const startJob = useStore((s) => s.startJob)
+
+  const [showDetail, setShowDetail] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  const copyDetail = async () => {
+    await navigator.clipboard.writeText(job.error_detail ?? '')
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
 
   const showProgress = job.status === 'running'
   const pct = Math.max(0, Math.min(100, job.progress?.percent ?? 0))
@@ -104,7 +114,35 @@ export function UrlRow({ job }: { job: Job }) {
       )}
 
       {job.status === 'error' && job.error && (
-        <div className="mt-1 text-xs text-red-400">{job.error}</div>
+        <div className="mt-1 text-xs text-red-400">
+          <div>{job.error}</div>
+          {/* The friendly message is a guess at the cause; the raw yt-dlp
+              output is the ground truth. Keep it one click away rather than
+              hidden, so a wrong guess is always checkable. */}
+          {job.error_detail && (
+            <>
+              <div className="mt-1 flex items-center gap-2">
+                <button
+                  onClick={() => setShowDetail((v) => !v)}
+                  className="text-[11px] text-neutral-400 hover:text-neutral-200"
+                >
+                  {showDetail ? '▾' : '▸'} Details
+                </button>
+                <button
+                  onClick={copyDetail}
+                  className="text-[11px] text-neutral-400 hover:text-neutral-200"
+                >
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+              {showDetail && (
+                <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-900 p-2 font-mono text-[10px] leading-snug text-neutral-300">
+                  {job.error_detail}
+                </pre>
+              )}
+            </>
+          )}
+        </div>
       )}
     </div>
   )

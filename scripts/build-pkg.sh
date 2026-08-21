@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build MMI Tunes.app with bundled yt-dlp / ffmpeg / ffprobe and wrap
+# Build MMI Tunes.app with bundled yt-dlp / ffmpeg / ffprobe / qjs and wrap
 # the result in a .pkg installer. The .pkg drops the .app under
 # /Applications/ on the user's machine — no drag-to-/Applications,
 # no `brew install` for dependencies.
@@ -19,7 +19,7 @@ DIST_DIR="dist"
 PKG_PATH="${DIST_DIR}/MMI-Tunes-${VERSION}.pkg"
 
 # --- Sanity: bundled tools must be present ---
-for tool in yt-dlp ffmpeg ffprobe; do
+for tool in yt-dlp ffmpeg ffprobe qjs; do
   if [[ ! -x "tools/${tool}" ]]; then
     echo "ERROR: tools/${tool} missing or not executable." >&2
     echo "Run scripts/download-tools.sh first." >&2
@@ -36,7 +36,8 @@ RES="${APP_PATH}/Contents/Resources"
 cp tools/yt-dlp "${RES}/yt-dlp"
 cp tools/ffmpeg "${RES}/ffmpeg"
 cp tools/ffprobe "${RES}/ffprobe"
-chmod +x "${RES}/yt-dlp" "${RES}/ffmpeg" "${RES}/ffprobe"
+cp tools/qjs "${RES}/qjs"
+chmod +x "${RES}/yt-dlp" "${RES}/ffmpeg" "${RES}/ffprobe" "${RES}/qjs"
 
 # Strip macOS quarantine xattrs so the binaries run without prompting
 # (the .pkg installer would fail signature checks otherwise).

@@ -16,10 +16,10 @@ import (
 // is a breaking change for already-installed users.
 type Settings struct {
 	DownloadFolder      string `json:"download_folder"`
-	Bitrate             int    `json:"bitrate"`           // kbps
-	SampleRate          int    `json:"sample_rate"`       // Hz
-	Channels            int    `json:"channels"`          // 1 or 2
-	Concurrency         int    `json:"concurrency"`       // parallel downloads
+	Bitrate             int    `json:"bitrate"`     // kbps
+	SampleRate          int    `json:"sample_rate"` // Hz
+	Channels            int    `json:"channels"`    // 1 or 2
+	Concurrency         int    `json:"concurrency"` // parallel downloads
 	EmbedMetadata       bool   `json:"embed_metadata"`
 	EmbedThumbnail      bool   `json:"embed_thumbnail"`
 	ThumbnailMaxPx      int    `json:"thumbnail_max_px"`
@@ -27,6 +27,7 @@ type Settings struct {
 	GenerateM3U         bool   `json:"generate_m3u"`
 	DedupHistory        bool   `json:"dedup_history"`
 	AutoDetectClipboard bool   `json:"auto_detect_clipboard"`
+	VerboseLogging      bool   `json:"verbose_logging"` // pass -v to yt-dlp, tee stderr to the log
 }
 
 // Defaults returns Audi-MMI-tuned defaults for a fresh install.
@@ -45,6 +46,7 @@ func Defaults(downloadFolder string) Settings {
 		GenerateM3U:         false,
 		DedupHistory:        true,
 		AutoDetectClipboard: true,
+		VerboseLogging:      false,
 	}
 }
 

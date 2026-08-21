@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useStore, type Settings } from '../store/jobs'
-import { GetSettings, PickFolder } from '../../wailsjs/go/main/App'
+import { GetSettings, OpenLog, PickFolder } from '../../wailsjs/go/main/App'
 
 interface Props {
   open: boolean
@@ -15,6 +15,7 @@ export function SettingsDrawer({ open, onClose }: Props) {
   // once); track the at-launch value so we can show a "restart required"
   // hint when the user changes it.
   const [launchConcurrency, setLaunchConcurrency] = useState<number | null>(null)
+  const [logError, setLogError] = useState<string | null>(null)
 
   useEffect(() => {
     if (settings) {
@@ -40,6 +41,15 @@ export function SettingsDrawer({ open, onClose }: Props) {
 
   const applyMMIPreset = () => {
     persist({ ...draft, bitrate: 320, sample_rate: 48000, channels: 2, thumbnail_max_px: 800 })
+  }
+
+  const openLog = async () => {
+    try {
+      await OpenLog()
+      setLogError(null)
+    } catch (e: any) {
+      setLogError(e?.message ?? String(e))
+    }
   }
 
   const pickFolder = async () => {
@@ -110,6 +120,22 @@ export function SettingsDrawer({ open, onClose }: Props) {
           <BoolRow label="Skip already-downloaded videos" checked={draft.dedup_history} onChange={(v) => persist({ ...draft, dedup_history: v })} />
           <BoolRow label="Auto-detect YouTube URLs in clipboard" checked={draft.auto_detect_clipboard} onChange={(v) => persist({ ...draft, auto_detect_clipboard: v })} />
           <BoolRow label="Generate M3U playlist" checked={draft.generate_m3u} onChange={(v) => persist({ ...draft, generate_m3u: v })} />
+        </Section>
+
+        <Section title="Diagnostics">
+          <BoolRow label="Verbose logging" checked={draft.verbose_logging} onChange={(v) => persist({ ...draft, verbose_logging: v })} />
+          <p className="text-[11px] text-neutral-500">
+            Runs yt-dlp with <code>-v</code> and writes its full output to{' '}
+            <code>~/Library/Logs/MMI&nbsp;Tunes/mmi-tunes.log</code>. Turn this on
+            before reproducing a failure, then attach the log to a bug report.
+          </p>
+          <button
+            onClick={openLog}
+            className="w-full rounded bg-neutral-700 px-2 py-1 text-xs text-white hover:bg-neutral-600"
+          >
+            Open log
+          </button>
+          {logError && <div className="text-[11px] text-yellow-400">{logError}</div>}
         </Section>
 
         <p className="mt-4 text-[11px] text-neutral-500">

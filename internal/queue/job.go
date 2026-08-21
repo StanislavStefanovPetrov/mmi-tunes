@@ -25,18 +25,19 @@ const (
 // or write to jobs.json. The live, mutating instance lives inside the
 // queue as *jobState; Snapshot() converts state → Job.
 type Job struct {
-	ID         string               `json:"id"`
-	URL        string               `json:"url"`
-	VideoID    string               `json:"video_id,omitempty"`
-	Title      string               `json:"title,omitempty"`
-	Status     Status               `json:"status"`
-	Progress   downloader.Progress  `json:"progress"`
-	Error      string               `json:"error,omitempty"`
-	ErrorCode  downloader.ErrorCode `json:"error_code,omitempty"`
-	OutputPath string               `json:"output_path,omitempty"`
-	AddedAt    time.Time            `json:"added_at"`
-	StartedAt  *time.Time           `json:"started_at,omitempty"`
-	FinishedAt *time.Time           `json:"finished_at,omitempty"`
+	ID          string               `json:"id"`
+	URL         string               `json:"url"`
+	VideoID     string               `json:"video_id,omitempty"`
+	Title       string               `json:"title,omitempty"`
+	Status      Status               `json:"status"`
+	Progress    downloader.Progress  `json:"progress"`
+	Error       string               `json:"error,omitempty"`
+	ErrorCode   downloader.ErrorCode `json:"error_code,omitempty"`
+	ErrorDetail string               `json:"error_detail,omitempty"`
+	OutputPath  string               `json:"output_path,omitempty"`
+	AddedAt     time.Time            `json:"added_at"`
+	StartedAt   *time.Time           `json:"started_at,omitempty"`
+	FinishedAt  *time.Time           `json:"finished_at,omitempty"`
 }
 
 // jobState wraps a Job with the mutex and cancel func used by the queue
@@ -78,11 +79,26 @@ func (s *jobState) setProgress(p downloader.Progress) {
 	s.mu.Unlock()
 }
 
-func (s *jobState) setError(code downloader.ErrorCode, msg string) {
+// maxErrorDetailBytes caps the raw stderr we keep per job. Jobs are
+// persisted to jobs.json on every change, and verbose yt-dlp output would
+// otherwise bloat the file without bound.
+const maxErrorDetailBytes = 8 << 10 // 8 KiB
+
+func (s *jobState) setError(code downloader.ErrorCode, msg, detail string) {
 	s.mu.Lock()
 	s.data.ErrorCode = code
 	s.data.Error = msg
+	s.data.ErrorDetail = truncateHead(detail, maxErrorDetailBytes)
 	s.mu.Unlock()
+}
+
+// truncateHead keeps the LAST max bytes of v — yt-dlp reports the actual
+// failure at the end of stderr, so the tail is the useful part.
+func truncateHead(v string, max int) string {
+	if len(v) <= max {
+		return v
+	}
+	return "…(truncated)\n" + v[len(v)-max:]
 }
 
 func (s *jobState) setResult(videoID, title, output string) {

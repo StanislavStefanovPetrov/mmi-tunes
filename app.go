@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -76,6 +77,7 @@ func (a *App) startup(ctx context.Context) {
 				EmbedThumbnail: s.EmbedThumbnail,
 				ThumbnailMaxPx: s.ThumbnailMaxPx,
 				Transliterate:  s.Transliterate,
+				Verbose:        s.VerboseLogging,
 			}
 		},
 	)
@@ -319,6 +321,23 @@ func (a *App) RevealHistoryItem(videoID string) error {
 		return errors.New("RevealInFinder only supported on macOS")
 	}
 	return exec.Command("open", "-R", rec.OutputPath).Run()
+}
+
+// OpenLog reveals the verbose yt-dlp log in Finder. The path comes from
+// downloader.LogPath rather than the frontend, so guardPath does not apply.
+// Returns an error if verbose logging has never run and the file is absent.
+func (a *App) OpenLog() error {
+	if runtime.GOOS != "darwin" {
+		return errors.New("OpenLog only supported on macOS")
+	}
+	path, err := downloader.LogPath()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err != nil {
+		return errors.New("no log yet — enable Verbose logging and run a download")
+	}
+	return exec.Command("open", "-R", path).Run()
 }
 
 // CountFilesInFolder returns the number of regular files directly inside

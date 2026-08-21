@@ -53,7 +53,7 @@ Tested on **Audi MMI 3G+** (Audi Q7 4LB).
 2. Double-click the `.pkg` → Apple installer wizard → **Install** → enter your password.
 3. Launch from Spotlight (`⌘+Space → "MMI Tunes"`).
 
-`yt-dlp`, `ffmpeg`, and `ffprobe` ship inside the bundle — **no `brew install` needed**, no Homebrew assumed. Works on a fresh Mac.
+`yt-dlp`, `ffmpeg`, `ffprobe`, and `qjs` ship inside the bundle — **no `brew install` needed**, no Homebrew assumed. Works on a fresh Mac.
 
 First launch: macOS will warn that the developer can't be verified (the build is unsigned — no Apple Developer account). Right-click the app in **/Applications** → **Open** → confirm. After that it launches normally.
 
@@ -74,6 +74,13 @@ First launch: macOS will warn that the developer can't be verified (the build is
 - **Audi MMI Preset** — one click sets bitrate to 320, sample rate to 48000, stereo, cover ≤ 800 px.
 - **Concurrent downloads** (1–5).
 - **Embed metadata / thumbnail**, **Cyrillic transliteration**, **Skip duplicates**, **Auto-detect clipboard URLs**.
+- **Verbose logging** (Diagnostics) — runs yt-dlp with `-v` and writes its full output to
+  `~/Library/Logs/MMI Tunes/mmi-tunes.log`. Off by default. Turn it on before reproducing a
+  failure, then use **Open log**.
+
+When a download fails, the row shows a short cause plus a **Details** toggle with the raw
+yt-dlp output and a **Copy** button — the friendly message is a best guess, the raw output is
+the ground truth.
 
 ## How it works
 
@@ -86,7 +93,8 @@ First launch: macOS will warn that the developer can't be verified (the build is
 │  ├─ settings.Store / history.Store / queue.Save+Load         │
 │  └─ downloader.Download                                      │
 │      └─ yt-dlp (bundled in Resources/)                       │
-│          └─ ffmpeg + ffprobe (bundled, invoked by yt-dlp)    │
+│          ├─ ffmpeg + ffprobe (bundled, invoked by yt-dlp)    │
+│          └─ qjs (bundled; solves YouTube's JS n-challenge)   │
 │      └─ postprocess.ResizeCoverArtInMP3 (Go, bogem/id3v2)    │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -104,14 +112,22 @@ Persistence:
 
 - **Backend** — Go 1.23, [Wails v2](https://wails.io), [`bogem/id3v2`](https://github.com/bogem/id3v2), `golang.org/x/image/draw`.
 - **Frontend** — React 18, TypeScript, Vite, Tailwind CSS, Zustand.
-- **Bundled CLIs** — [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (universal binary from upstream releases) and static [`ffmpeg`](https://ffmpeg.org/) + `ffprobe` from [evermeet.cx](https://evermeet.cx/ffmpeg/). All three live in `MMI Tunes.app/Contents/Resources/`.
+- **Bundled CLIs** — [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (universal binary from upstream releases), static [`ffmpeg`](https://ffmpeg.org/) + `ffprobe` from [evermeet.cx](https://evermeet.cx/ffmpeg/), and [`qjs`](https://github.com/quickjs-ng/quickjs) (QuickJS-NG, 1.2 MB). All four live in `MMI Tunes.app/Contents/Resources/`.
+
+### Why a JavaScript runtime is bundled
+
+YouTube requires solving a JavaScript "n signature" challenge before it will return adaptive
+audio formats, and yt-dlp delegates that to an external JS engine. With none available it
+falls back to the `visionos` client, which answers `UNPLAYABLE` — surfacing as the misleading
+`This video is not available` on videos that play fine in a browser. `qjs` is bundled so the
+app never depends on the user having deno or a recent-enough Node.
 
 ## Development
 
 ```bash
 # Prereqs (one-time)
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
-brew install yt-dlp ffmpeg          # only for `wails dev` and `go test`;
+brew install yt-dlp ffmpeg quickjs  # only for `wails dev` and `go test`;
                                     # the .pkg build downloads bundled
                                     # binaries on its own (see below).
 
@@ -125,13 +141,13 @@ go test -race ./...
 ### Production build (.pkg installer)
 
 ```bash
-./scripts/download-tools.sh         # pulls yt-dlp + static ffmpeg/ffprobe
-                                    # into ./tools/  (gitignored)
+./scripts/download-tools.sh         # pulls yt-dlp, static ffmpeg/ffprobe,
+                                    # and qjs into ./tools/  (gitignored)
 ./scripts/build-pkg.sh 1.0.0        # → dist/MMI-Tunes-1.0.0.pkg
 ```
 
 `build-pkg.sh` runs `wails build -platform darwin/arm64`, copies the
-three CLI binaries into `MMI Tunes.app/Contents/Resources/`, ad-hoc
+four CLI binaries into `MMI Tunes.app/Contents/Resources/`, ad-hoc
 re-signs the app (since modifying Resources/ invalidates the signature),
 and wraps the result in a `.pkg` via `pkgbuild`.
 
@@ -154,7 +170,7 @@ Done:
 - [x] Per-row download / retry / cancel + Clear all
 - [x] yt-dlp stderr categorisation (geo, age, Premium, bot-check, network)
 - [x] App icon, full `-race` test suite
-- [x] Bundled `yt-dlp` + `ffmpeg` (no `brew install` for end users)
+- [x] Bundled `yt-dlp` + `ffmpeg` + `qjs` (no `brew install` for end users)
 - [x] `.pkg` installer + GitHub Releases
 
 Maybe next:

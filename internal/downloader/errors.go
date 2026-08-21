@@ -16,6 +16,7 @@ const (
 	ErrCopyright     ErrorCode = "COPYRIGHT_REMOVED"
 	ErrNetwork       ErrorCode = "NETWORK"
 	ErrFFmpegMissing ErrorCode = "FFMPEG_MISSING"
+	ErrJSRuntime     ErrorCode = "JS_RUNTIME_MISSING"
 	ErrYtDlpOutdated ErrorCode = "YTDLP_OUTDATED"
 	ErrFolderMissing ErrorCode = "FOLDER_MISSING"
 	ErrCancelled     ErrorCode = "CANCELLED"
@@ -29,6 +30,24 @@ func CategorizeStderr(stderr string) (ErrorCode, string) {
 	s := strings.ToLower(stderr)
 
 	switch {
+	// --- Missing JS runtime (checked first: direct evidence) ---
+	//
+	// YouTube requires solving a JavaScript "n signature" challenge before
+	// it returns adaptive audio formats. With no JS engine available,
+	// yt-dlp falls back to the visionos client, which answers UNPLAYABLE —
+	// so stderr carries BOTH this warning and a misleading "This video is
+	// not available" / "requested format is not available" / HTTP 403.
+	//
+	// This case therefore goes first: the warning only appears when a JS
+	// runtime is genuinely missing or broken, making it the actionable
+	// cause, while the accompanying messages previously mapped to
+	// "unavailable", "outdated", or "network error" and sent diagnosis the
+	// wrong way. With qjs bundled it should never fire.
+	case strings.Contains(s, "no supported javascript runtime"),
+		strings.Contains(s, "n challenge solving failed"),
+		strings.Contains(s, "error solving n challenge"):
+		return ErrJSRuntime, "YouTube needs a JavaScript runtime to decode audio formats — this build is missing it."
+
 	// --- Bot / sign-in challenges (most common 2024-25 failure mode) ---
 	case strings.Contains(s, "sign in to confirm you're not a bot"),
 		strings.Contains(s, "sign in to confirm you’re not a bot"),
@@ -67,6 +86,7 @@ func CategorizeStderr(stderr string) (ErrorCode, string) {
 	// --- Removed / unavailable ---
 	case strings.Contains(s, "this video has been removed"),
 		strings.Contains(s, "this video is no longer available"),
+		strings.Contains(s, "this video is not available"),
 		strings.Contains(s, "video unavailable"):
 		return ErrUnavailable, "Video is unavailable or removed."
 

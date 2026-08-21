@@ -42,8 +42,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, "ffmpeg not found in PATH —", status.FFmpeg.Error)
 		os.Exit(1)
 	}
+	// Not fatal: without a JS runtime the download still runs and fails
+	// with a diagnosable message, which is worth exercising here.
+	if !status.JSRuntime.Found {
+		fmt.Fprintln(os.Stderr, "WARNING: qjs not found — YouTube will return no audio formats")
+	}
 	fmt.Printf("yt-dlp %s\n", status.YtDlp.Version)
 	fmt.Printf("ffmpeg %s\n", status.FFmpeg.Version)
+	fmt.Printf("qjs    %s\n", status.JSRuntime.Version)
 	fmt.Printf("output: %s\n\n", abs)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)

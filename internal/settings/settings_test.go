@@ -67,11 +67,11 @@ func TestStore_ClampOnSave(t *testing.T) {
 	store, _ := NewStore(filepath.Join(dir, "s.json"), Defaults("/tmp/x"))
 	insane := Settings{
 		DownloadFolder: "/tmp/x",
-		Bitrate:        9999, // → 320
+		Bitrate:        9999,   // → 320
 		SampleRate:     192000, // → 48000
-		Channels:       7,    // → 2
-		Concurrency:    99,   // → 5
-		ThumbnailMaxPx: 5000, // → 1000
+		Channels:       7,      // → 2
+		Concurrency:    99,     // → 5
+		ThumbnailMaxPx: 5000,   // → 1000
 	}
 	if err := store.Save(insane); err != nil {
 		t.Fatal(err)
@@ -118,5 +118,59 @@ func TestStore_MergesPartialFile(t *testing.T) {
 	}
 	if got.SampleRate != 48000 || got.Channels != 2 || got.Concurrency != 3 {
 		t.Errorf("missing fields not filled from defaults: %+v", got)
+	}
+}
+
+// Every already-installed user has a settings.json written before
+// verbose_logging existed. Loading one must not error and must leave
+// verbose logging off — an upgrade should not silently start writing a log
+// file, and must not disturb the fields the user did set.
+func TestStore_UpgradeFromFileWithoutVerboseLogging(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	// A realistic v1.0.1 settings.json: every key of that release, no
+	// verbose_logging.
+	const old = `{"download_folder":"/Users/x/Music/MMI Tunes","bitrate":320,` +
+		`"sample_rate":48000,"channels":2,"concurrency":3,"embed_metadata":true,` +
+		`"embed_thumbnail":true,"thumbnail_max_px":800,"transliterate":true,` +
+		`"generate_m3u":false,"dedup_history":true,"auto_detect_clipboard":true}`
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewStore(path, Defaults("/tmp/default"))
+	if err != nil {
+		t.Fatalf("loading a pre-upgrade settings.json must not fail: %v", err)
+	}
+	got := store.Get()
+	if got.VerboseLogging {
+		t.Error("VerboseLogging defaulted to true on upgrade; a quiet app must stay quiet unless asked")
+	}
+	if got.DownloadFolder != "/Users/x/Music/MMI Tunes" {
+		t.Errorf("upgrade clobbered the user's download folder: %q", got.DownloadFolder)
+	}
+}
+
+func TestStore_VerboseLoggingRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	store, err := NewStore(path, Defaults("/tmp/default"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := store.Get()
+	s.VerboseLogging = true
+	if err := store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-open from disk: the toggle has to survive a restart or the user
+	// silently loses verbose mode mid-investigation.
+	reopened, err := NewStore(path, Defaults("/tmp/default"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reopened.Get().VerboseLogging {
+		t.Error("VerboseLogging did not persist across reopen")
 	}
 }

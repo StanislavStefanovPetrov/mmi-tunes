@@ -11,7 +11,8 @@ export function DiagnosticsBanner() {
 
   const ytOk = tools.ytdlp.found
   const ffOk = tools.ffmpeg.found
-  if (ytOk && ffOk && !updateMessage) return null
+  const jsOk = tools.jsruntime.found
+  if (ytOk && ffOk && jsOk && !updateMessage) return null
 
   const refresh = async () => {
     const next = await CheckTools()
@@ -43,6 +44,16 @@ export function DiagnosticsBanner() {
           {!ffOk && (
             <div>
               <strong>ffmpeg is missing.</strong> Install with <code className="rounded bg-neutral-800 px-1">brew install ffmpeg</code>.
+            </div>
+          )}
+          {/* Unlike yt-dlp and ffmpeg, qjs is not a Homebrew package — it
+              ships inside the app bundle, so a missing one means a broken
+              install rather than something the user can go fetch. Without
+              it YouTube returns no audio formats and every download fails. */}
+          {!jsOk && (
+            <div>
+              <strong>JavaScript runtime is missing.</strong> Downloads will fail — YouTube
+              needs it to decode audio formats. Reinstall MMI Tunes to restore it.
             </div>
           )}
           {updateMessage && <div className="mt-1">{updateMessage}</div>}
