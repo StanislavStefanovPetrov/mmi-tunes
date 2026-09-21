@@ -42,11 +42,18 @@ export function UrlRow({ job }: { job: Job }) {
 
   const [showDetail, setShowDetail] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [copiedUrl, setCopiedUrl] = useState(false)
 
   const copyDetail = async () => {
     await navigator.clipboard.writeText(job.error_detail ?? '')
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
+  }
+
+  const copyUrl = async () => {
+    await navigator.clipboard.writeText(job.url)
+    setCopiedUrl(true)
+    setTimeout(() => setCopiedUrl(false), 1500)
   }
 
   const showProgress = job.status === 'running'
@@ -112,6 +119,13 @@ export function UrlRow({ job }: { job: Job }) {
               ✕
             </button>
           )}
+          <button
+            onClick={copyUrl}
+            className="rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-100 hover:bg-neutral-600"
+            title="Copy URL"
+          >
+            {copiedUrl ? '✓' : '📋'}
+          </button>
           <button
             onClick={() => removeJob(job.id)}
             className="rounded bg-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-red-700 hover:text-white"
