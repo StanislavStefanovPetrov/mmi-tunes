@@ -32,7 +32,7 @@ func TestCategorizeStderr(t *testing.T) {
 		{"unavailable", "Video unavailable", ErrUnavailable},
 		// Once a JS runtime is present, this phrasing means the video really
 		// is gone — it must not be blamed on the runtime.
-		{"not available, no js evidence", "ERROR: [youtube] abc: This video is not available", ErrUnavailable},
+		{"not available, no js evidence", "ERROR: [youtube] abc: This video is not available", ErrNoFormats},
 
 		{"private", "ERROR: Private video", ErrPrivate},
 
@@ -51,8 +51,10 @@ func TestCategorizeStderr(t *testing.T) {
 		{"format not available", "ERROR: Requested format is not available", ErrYtDlpOutdated},
 		{"unable to extract", "Unable to extract player response", ErrYtDlpOutdated},
 
-		{"http 403", "ERROR: unable to download video data: HTTP Error 403: Forbidden", ErrNetwork},
+		{"http 403", "ERROR: unable to download video data: HTTP Error 403: Forbidden", ErrForbidden},
 		{"http 429", "HTTP Error 429: Too Many Requests", ErrNetwork},
+		{"images only", "WARNING: Only images are available for download. use --list-formats to see them", ErrNoFormats},
+		{"really removed", "ERROR: [youtube] abc: This video has been removed by the uploader", ErrUnavailable},
 		{"http 503", "HTTP Error 503: Service Unavailable", ErrNetwork},
 		{"dns", "could not resolve host: youtube.com", ErrNetwork},
 		{"timeout", "operation timeout", ErrNetwork},
@@ -103,5 +105,36 @@ func TestCategorizeStderr_Unsigned403IsNotBlamedOnTheNetwork(t *testing.T) {
 ERROR: unable to download video data: HTTP Error 403: Forbidden`
 	if code, msg := CategorizeStderr(stderr); code != ErrJSRuntime {
 		t.Errorf("code = %s (%q), want %s", code, msg, ErrJSRuntime)
+	}
+}
+
+// A public, playable video whose formats YouTube withholds without a PO
+// token reports the same words a deleted one does. Calling it removed
+// tells the user to give up on a video the low-quality retry can still
+// fetch, so the message must not claim deletion.
+func TestCategorizeStderr_GatedVideoIsNotCalledRemoved(t *testing.T) {
+	stderr := `[youtube] hNlhxuyy1T0: Downloading visionos player API JSON
+[youtube] hNlhxuyy1T0: Downloading tv downgraded player API JSON
+ERROR: [youtube] hNlhxuyy1T0: This video is not available`
+	code, msg := CategorizeStderr(stderr)
+	if code != ErrNoFormats {
+		t.Errorf("code = %s, want %s", code, ErrNoFormats)
+	}
+	if strings.Contains(strings.ToLower(msg), "removed") && !strings.Contains(strings.ToLower(msg), "may be removed") {
+		t.Errorf("message asserts deletion for a gated video: %q", msg)
+	}
+}
+
+// A bare 403 on a media URL is YouTube rejecting that signed link, not a
+// broken connection — the rest of the queue keeps downloading through it.
+// Blaming the network sends the user to their router instead of Retry.
+func TestCategorizeStderr_BareForbiddenIsNotANetworkFault(t *testing.T) {
+	stderr := "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+	code, msg := CategorizeStderr(stderr)
+	if code != ErrForbidden {
+		t.Errorf("code = %s, want %s", code, ErrForbidden)
+	}
+	if strings.Contains(strings.ToLower(msg), "connection") {
+		t.Errorf("message blames the connection: %q", msg)
 	}
 }

@@ -36,7 +36,19 @@ type Settings struct {
 	ThumbnailMaxPx int  // resize embedded thumbnail to this max dimension
 	Transliterate  bool // (currently always on; reserved for future toggle)
 	Verbose        bool // pass -v to yt-dlp and tee stderr to the log file
+
+	// UseFallbackClient asks YouTube as fallbackPlayerClient instead of the
+	// clients yt-dlp picks by default. It reaches videos the default clients
+	// are served no media formats for, at a large cost in audio quality, so
+	// it is never set on the app's behalf.
+	UseFallbackClient bool
 }
+
+// fallbackPlayerClient is the one client YouTube still answers with a
+// playable stream when it withholds formats from the defaults. What it
+// returns is a progressive 360p format whose AAC track is far below the
+// MMI bitrate, so a download that used it is worth marking in the UI.
+const fallbackPlayerClient = "mweb"
 
 // MMIDefaults returns the recommended settings for Audi MMI 3G+ output.
 func MMIDefaults(downloadFolder string) Settings {
@@ -160,7 +172,7 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 	}
 
 	onProgress(Progress{Stage: StageMetadata, Message: "Fetching video metadata…"})
-	meta, err := fetchMetadata(ctx, canonical, s.Verbose)
+	meta, err := fetchMetadata(ctx, canonical, s)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +260,7 @@ func Download(ctx context.Context, url string, s Settings, onProgress func(Progr
 // Warnings are deliberately NOT suppressed: yt-dlp reports a missing JS
 // runtime as a warning, and swallowing it turns a diagnosable failure into
 // an opaque "This video is not available".
-func fetchMetadata(ctx context.Context, url string, verbose bool) (*Metadata, error) {
+func fetchMetadata(ctx context.Context, url string, s Settings) (*Metadata, error) {
 	ytdlpPath, err := tools.Locate("yt-dlp")
 	if err != nil {
 		return nil, &Error{Code: ErrUnknown, Message: "yt-dlp not found: " + err.Error()}
@@ -256,16 +268,22 @@ func fetchMetadata(ctx context.Context, url string, verbose bool) (*Metadata, er
 	args := append(jsRuntimeArgs(),
 		"--skip-download",
 		"--print-json",
-		url,
 	)
-	if verbose {
+	// The gated videos the fallback exists for are refused at this step,
+	// before the download command ever runs, so it has to ask as the same
+	// client the download will.
+	if s.UseFallbackClient {
+		args = append(args, "--extractor-args", "youtube:player_client="+fallbackPlayerClient)
+	}
+	args = append(args, url)
+	if s.Verbose {
 		args = append([]string{"-v"}, args...)
 	}
 	cmd := exec.CommandContext(ctx, ytdlpPath, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if verbose {
+	if s.Verbose {
 		if logFile := openVerboseLog(url); logFile != nil {
 			defer logFile.Close()
 			cmd.Stderr = io.MultiWriter(&stderr, logFile)
@@ -324,6 +342,9 @@ func buildYtDlpArgs(url, outputTemplate string, s Settings) []string {
 	}
 	if s.Verbose {
 		args = append(args, "-v")
+	}
+	if s.UseFallbackClient {
+		args = append(args, "--extractor-args", "youtube:player_client="+fallbackPlayerClient)
 	}
 	args = append(args, url)
 	return args

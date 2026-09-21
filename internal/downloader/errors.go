@@ -15,6 +15,8 @@ const (
 	ErrPrivate       ErrorCode = "PRIVATE"
 	ErrCopyright     ErrorCode = "COPYRIGHT_REMOVED"
 	ErrNetwork       ErrorCode = "NETWORK"
+	ErrForbidden     ErrorCode = "FORBIDDEN"
+	ErrNoFormats     ErrorCode = "NO_FORMATS"
 	ErrFFmpegMissing ErrorCode = "FFMPEG_MISSING"
 	ErrJSRuntime     ErrorCode = "JS_RUNTIME_MISSING"
 	ErrYtDlpOutdated ErrorCode = "YTDLP_OUTDATED"
@@ -86,9 +88,20 @@ func CategorizeStderr(stderr string) (ErrorCode, string) {
 	// --- Removed / unavailable ---
 	case strings.Contains(s, "this video has been removed"),
 		strings.Contains(s, "this video is no longer available"),
-		strings.Contains(s, "this video is not available"),
 		strings.Contains(s, "video unavailable"):
 		return ErrUnavailable, "Video is unavailable or removed."
+
+	// --- No formats offered ---
+	//
+	// YouTube answers some public videos with storyboard images and no
+	// media streams unless the request carries a PO token, and yt-dlp
+	// reports that as "This video is not available" — the same words a
+	// deleted video would produce. stderr cannot tell the two apart, so
+	// the message names both and points at the low-quality retry, which
+	// reaches these videos through a player client YouTube does not gate.
+	case strings.Contains(s, "this video is not available"),
+		strings.Contains(s, "only images are available"):
+		return ErrNoFormats, "YouTube returned no downloadable formats — the video may be removed, or YouTube is gating it. Try again, or retry at low quality."
 
 	// --- Private ---
 	case strings.Contains(s, "private video"),
@@ -117,13 +130,22 @@ func CategorizeStderr(stderr string) (ErrorCode, string) {
 		strings.Contains(s, "no video formats found"):
 		return ErrYtDlpOutdated, "yt-dlp may be outdated — try Update."
 
+	// --- Forbidden ---
+	//
+	// A 403 on a media URL is YouTube rejecting that particular signed
+	// link, not a broken connection: the same queue keeps downloading
+	// other videos while it happens, and a plain retry usually succeeds.
+	// It stays below the JS-runtime case above, which owns the 403 that
+	// comes from a URL this app failed to sign.
+	case strings.Contains(s, "http error 403"):
+		return ErrForbidden, "YouTube refused the download URL — try again."
+
 	// --- Network ---
 	case strings.Contains(s, "name resolution"),
 		strings.Contains(s, "network is unreachable"),
 		strings.Contains(s, "connection refused"),
 		strings.Contains(s, "could not resolve host"),
 		strings.Contains(s, "unable to download webpage"),
-		strings.Contains(s, "http error 403"),
 		strings.Contains(s, "http error 429"),
 		strings.Contains(s, "http error 5"),
 		strings.Contains(s, "ssl: certificate"),

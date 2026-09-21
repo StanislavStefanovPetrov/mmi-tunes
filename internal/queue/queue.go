@@ -195,6 +195,20 @@ func (q *Queue) StartJob(id string) bool {
 	}
 }
 
+// StartJobWithFallback is StartJob for a job that the default player
+// client cannot fetch. The flag sticks to the job so the finished file
+// stays marked as the lower-quality one it is.
+func (q *Queue) StartJobWithFallback(id string) bool {
+	q.mu.Lock()
+	js, ok := q.jobs[id]
+	q.mu.Unlock()
+	if !ok || js == nil {
+		return false
+	}
+	js.setFallbackClient(true)
+	return q.StartJob(id)
+}
+
 // StartAll queues every job currently in StatusQueued for execution.
 func (q *Queue) StartAll() int {
 	q.mu.Lock()
@@ -413,7 +427,10 @@ func (q *Queue) runJob(id string) {
 	js.setStatus(StatusRunning)
 	q.emit(Event{Kind: EventStatus, Job: js.snapshot()})
 
-	res, err := q.downloader(ctx, js.data.URL, q.settings(), func(p downloader.Progress) {
+	dlSettings := q.settings()
+	dlSettings.UseFallbackClient = js.fallbackClient()
+
+	res, err := q.downloader(ctx, js.data.URL, dlSettings, func(p downloader.Progress) {
 		js.setProgress(p)
 		q.emit(Event{Kind: EventProgress, Job: js.snapshot()})
 	})
