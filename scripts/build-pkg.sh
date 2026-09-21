@@ -29,7 +29,9 @@ done
 
 echo "==> Building Wails app (darwin/arm64)…"
 export PATH="$PATH:$(go env GOPATH)/bin"
-wails build -platform darwin/arm64 -clean
+# -X main.version feeds the About dialog; the PlistBuddy calls below write
+# the same value where Finder and System Settings read it.
+wails build -platform darwin/arm64 -clean -ldflags "-X main.version=${VERSION}"
 
 echo "==> Stamping version ${VERSION} into Info.plist…"
 PLIST="${APP_PATH}/Contents/Info.plist"

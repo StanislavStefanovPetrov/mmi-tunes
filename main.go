@@ -14,6 +14,10 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// version is stamped at build time by scripts/build-pkg.sh, from the same
+// value it writes into Info.plist. An unstamped build reports "dev".
+var version = "dev"
+
 func main() {
 	// macOS .app bundles launched from Finder inherit a minimal PATH
 	// that excludes /opt/homebrew/bin etc. Augment so child processes
@@ -43,7 +47,7 @@ func main() {
 			WindowIsTranslucent:  false,
 			About: &mac.AboutInfo{
 				Title:   "MMI Tunes",
-				Message: "macOS app for downloading YouTube audio as Audi MMI compatible MP3.\n\n© Stanislav Petrov",
+				Message: "macOS app for downloading YouTube audio as Audi MMI compatible MP3.\n\nVersion " + version + "\ngithub.com/StanislavStefanovPetrov/mmi-tunes\n\n© Stanislav Petrov",
 			},
 		},
 	})
