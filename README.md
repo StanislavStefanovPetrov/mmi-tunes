@@ -134,7 +134,7 @@ Persistence:
 
 - **Backend** — Go 1.23, [Wails v2](https://wails.io), [`bogem/id3v2`](https://github.com/bogem/id3v2), `golang.org/x/image/draw`.
 - **Frontend** — React 18, TypeScript, Vite, Tailwind CSS, Zustand.
-- **Bundled CLIs** — [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (universal binary from upstream releases), static [`ffmpeg`](https://ffmpeg.org/) + `ffprobe` from [evermeet.cx](https://evermeet.cx/ffmpeg/), and [`qjs`](https://github.com/quickjs-ng/quickjs) (QuickJS-NG, 1.2 MB). All four live in `MMI Tunes.app/Contents/Resources/`.
+- **Bundled CLIs** — [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) (universal binary from upstream releases), static arm64 [`ffmpeg`](https://ffmpeg.org/) + `ffprobe` from [osxexperts.net](https://www.osxexperts.net/), and [`qjs`](https://github.com/quickjs-ng/quickjs) (QuickJS-NG, 1.2 MB). All four live in `MMI Tunes.app/Contents/Resources/`.
 
 ### Why a JavaScript runtime is bundled
 
