@@ -272,6 +272,11 @@ func (a *App) StartAll() int { return a.queue.StartAll() }
 // download button.
 func (a *App) StartJob(id string) bool { return a.queue.StartJob(id) }
 
+// StartJobWithFallback retries a job through the low-quality player
+// client. Used by the per-row button that appears once a download has
+// failed for want of any offered format.
+func (a *App) StartJobWithFallback(id string) bool { return a.queue.StartJobWithFallback(id) }
+
 // CancelJob cancels a single job.
 func (a *App) CancelJob(id string) bool { return a.queue.Cancel(id) }
 

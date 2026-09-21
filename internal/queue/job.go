@@ -35,9 +35,16 @@ type Job struct {
 	ErrorCode   downloader.ErrorCode `json:"error_code,omitempty"`
 	ErrorDetail string               `json:"error_detail,omitempty"`
 	OutputPath  string               `json:"output_path,omitempty"`
-	AddedAt     time.Time            `json:"added_at"`
-	StartedAt   *time.Time           `json:"started_at,omitempty"`
-	FinishedAt  *time.Time           `json:"finished_at,omitempty"`
+
+	// FallbackClient asks the downloader for the low-quality player client
+	// on the next run, and afterwards records that the finished file came
+	// from it. The UI marks such a file so it is not mistaken for one at
+	// the configured bitrate.
+	FallbackClient bool `json:"fallback_client,omitempty"`
+
+	AddedAt    time.Time  `json:"added_at"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 // jobState wraps a Job with the mutex and cancel func used by the queue
@@ -99,6 +106,18 @@ func truncateHead(v string, max int) string {
 		return v
 	}
 	return "…(truncated)\n" + v[len(v)-max:]
+}
+
+func (s *jobState) setFallbackClient(v bool) {
+	s.mu.Lock()
+	s.data.FallbackClient = v
+	s.mu.Unlock()
+}
+
+func (s *jobState) fallbackClient() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.FallbackClient
 }
 
 func (s *jobState) setResult(videoID, title, output string) {

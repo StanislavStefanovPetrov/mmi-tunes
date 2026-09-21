@@ -40,6 +40,26 @@ func TestBuildYtDlpArgs_VerboseOnlyWhenEnabled(t *testing.T) {
 	}
 }
 
+// The fallback client costs most of the audio quality the app exists to
+// deliver, so it must never ride along unasked.
+func TestBuildYtDlpArgs_FallbackClientOnlyWhenEnabled(t *testing.T) {
+	s := testSettings()
+
+	if args := buildYtDlpArgs("u", "o", s); slices.Contains(args, "--extractor-args") {
+		t.Error("--extractor-args present by default; the fallback downgrades audio and must be opt-in per job")
+	}
+
+	s.UseFallbackClient = true
+	args := buildYtDlpArgs("u", "o", s)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--extractor-args youtube:player_client="+fallbackPlayerClient) {
+		t.Errorf("fallback client missing with UseFallbackClient on: %v", args)
+	}
+	if args[len(args)-1] != "u" {
+		t.Errorf("URL must stay last, got %q", args[len(args)-1])
+	}
+}
+
 // The Audi MMI output spec is the whole point of the app; assert the flags
 // that enforce it survive any future arg reshuffling.
 func TestBuildYtDlpArgs_KeepsMMISpec(t *testing.T) {

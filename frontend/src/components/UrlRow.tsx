@@ -38,6 +38,7 @@ export function UrlRow({ job }: { job: Job }) {
   const removeJob = useStore((s) => s.removeJob)
   const cancelJob = useStore((s) => s.cancelJob)
   const startJob = useStore((s) => s.startJob)
+  const startJobFallback = useStore((s) => s.startJobFallback)
 
   const [showDetail, setShowDetail] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -62,6 +63,14 @@ export function UrlRow({ job }: { job: Job }) {
             <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${STATUS_COLOR[job.status] ?? ''}`}>
               {formatStage(job)}
             </span>
+            {job.fallback_client && (
+              <span
+                className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-white"
+                title="Fetched through the mweb fallback client — YouTube offers it only a low-bitrate stream, well under the configured quality"
+              >
+                Low quality
+              </span>
+            )}
             <span className="truncate" title={job.url}>{job.url}</span>
           </div>
         </div>
@@ -74,6 +83,15 @@ export function UrlRow({ job }: { job: Job }) {
               title={job.status === 'error' || job.status === 'cancelled' ? 'Retry download' : 'Download this clip'}
             >
               {job.status === 'queued' ? '⬇' : '↻'}
+            </button>
+          )}
+          {job.status === 'error' && !job.fallback_client && (
+            <button
+              onClick={() => startJobFallback(job.id)}
+              className="rounded bg-amber-700 px-2 py-1 text-xs text-white hover:bg-amber-600"
+              title="Retry at low quality — asks YouTube as a client it does not gate, but the audio is well below the configured bitrate"
+            >
+              ↻⚠
             </button>
           )}
           {job.status === 'done' && job.output_path && (

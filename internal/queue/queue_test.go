@@ -294,3 +294,55 @@ func waitForError(t *testing.T, q *Queue) Job {
 	t.Fatalf("job did not enter error state, list=%+v", q.List())
 	return Job{}
 }
+
+// StartJobWithFallback exists so a user can trade audio quality for a
+// video YouTube offers no normal formats for. If the flag never reached
+// downloader.Settings the button would silently re-run the same failing
+// request, and if it did not stick to the job the finished file would
+// lose the marker that says it is the low-quality one.
+func TestQueue_StartJobWithFallbackReachesTheDownloader(t *testing.T) {
+	var mu sync.Mutex
+	var seen []bool
+	dl := func(_ context.Context, url string, s downloader.Settings, _ func(downloader.Progress)) (*downloader.Result, error) {
+		mu.Lock()
+		seen = append(seen, s.UseFallbackClient)
+		mu.Unlock()
+		return &downloader.Result{VideoID: "vid", Title: url, OutputPath: "/tmp/x.mp3"}, nil
+	}
+	q := newWithStub(t, 1, dl)
+
+	plain := q.Add("plain")
+	fallback := q.Add("fallback")
+	q.StartJob(plain.ID)
+	q.StartJobWithFallback(fallback.ID)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(seen)
+		mu.Unlock()
+		if n == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	got := append([]bool(nil), seen...)
+	mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("downloader ran %d times, want 2", len(got))
+	}
+	if got[0] || !got[1] {
+		t.Errorf("UseFallbackClient per run = %v, want [false true]", got)
+	}
+
+	for _, j := range q.List() {
+		if j.ID == fallback.ID && !j.FallbackClient {
+			t.Error("finished job lost the FallbackClient marker; the UI cannot flag the downgrade")
+		}
+		if j.ID == plain.ID && j.FallbackClient {
+			t.Error("plain job gained the FallbackClient marker")
+		}
+	}
+}
